@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#4a2f1f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="JC POS">
+<title>Jimo Cafe 厨房</title>
+<!-- アプリ版：google.script.run の代わり（オフライン保存・自動送信） -->
+<script src="api.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=Playfair+Display:ital,wght@0,600;1,600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #221b16;
+  --surface: #2d241e;
+  --card-bg: #382e27;
+  --ink: #f7f2ea;
+  --ink-soft: #b3a494;
+  --brown: #4a2f1f;
+  --accent: #c8672c;
+  --accent-soft: #5c341e;
+  --border: #4d4035;
+  --danger: #e74c3c;
+  --success: #27ae60;
+  --radius: 16px;
+  --shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: 'Noto Sans JP', sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  padding: 14px;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+}
+header .brand .title { font-size: 18px; font-weight: 900; color: #fff; }
+header .brand .sub { font-size: 11px; color: var(--accent); letter-spacing: 0.08em; }
+
+.controls { display: flex; gap: 8px; align-items: center; }
+.btn {
+  padding: 8px 14px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--card-bg); color: var(--ink); font-size: 13px; font-weight: 700; cursor: pointer;
+}
+.btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+.kitchen-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.table-ticket {
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.table-ticket.has-new { border-color: var(--accent); }
+
+.ticket-header {
+  display: flex; justify-content: space-between; align-items: center;
+  border-bottom: 1px dashed var(--border); padding-bottom: 8px; margin-bottom: 10px;
+}
+.ticket-table-name { font-size: 18px; font-weight: 900; color: var(--accent); }
+.ticket-time { font-size: 12px; color: var(--ink-soft); }
+
+.ticket-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ticket-item-row {
+  display: flex; justify-content: space-between; align-items: center;
+  background: var(--card-bg); padding: 8px 10px; border-radius: 8px; font-size: 14px;
+}
+.ticket-item-row.completed { opacity: 0.4; text-decoration: line-through; }
+.ticket-item-info { flex: 1; font-weight: 700; }
+.serve-btn { margin-left: 10px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--success); background: transparent; color: var(--success); font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.serve-btn.done { border-color: var(--border); color: var(--ink-soft); }
+.ticket-item-qty { font-size: 16px; font-weight: 900; color: var(--accent); margin-left: 10px; }
+
+.ticket-footer {
+  margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 10px;
+  display: flex; justify-content: flex-end; gap: 6px;
+}
+
+.complete-table-btn {
+  width: 100%; padding: 10px; border: none; border-radius: 10px;
+  background: var(--success); color: #fff; font-size: 14px; font-weight: 700; cursor: pointer;
+}
+
+.toast {
+  position: fixed; left: 50%; top: 16px; transform: translateX(-50%) translateY(-20px);
+  background: var(--accent); color: #fff; padding: 10px 18px; border-radius: 12px;
+  font-size: 13px; opacity: 0; transition: all .25s ease; z-index: 300; white-space: nowrap;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <div class="sub">JIMO CAFE KITCHEN DISPLAY</div>
+    <div class="title">厨房 リアルタイム注文管理</div>
+  </div>
+  <div class="controls">
+    <button type="button" class="btn active" onclick="loadKitchenOrders()">🔄 更新</button>
+    <label style="font-size: 12px; color: var(--ink-soft); display:flex; align-items:center; gap:4px;">
+      <input type="checkbox" id="autoRefreshCheck" checked onchange="toggleAutoRefresh()"> 自動更新(5秒)
+    </label>
+  </div>
+</header>
+
+<main>
+  <div class="kitchen-grid" id="kitchenGrid">
+    <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--ink-soft);">
+      未調理の注文を読み込み中...
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let autoRefreshTimer = null;
+let elapsedTickTimer = null;
+
+window.addEventListener('DOMContentLoaded', () => {
+  loadKitchenOrders();
+  startAutoRefresh();
+  startElapsedTicker();
+});
+
+function startElapsedTicker() {
+  if (elapsedTickTimer) clearInterval(elapsedTickTimer);
+  elapsedTickTimer = setInterval(updateElapsedTimes, 1000);
+}
+
+// 'HH:mm'形式の時刻から現在までの経過分数を算出（日付またぎは+24時間として補正）
+function elapsedSeconds(timeStr) {
+  if (!timeStr || !/^\d{1,2}:\d{2}(:\d{2})?/.test(timeStr)) return null;
+  const parts = timeStr.split(':');
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  const s = Number(parts[2] || 0);
+  if (isNaN(h) || isNaN(m) || isNaN(s)) return null;
+  const now = new Date();
+  const orderSeconds = h * 3600 + m * 60 + s;
+  const nowSeconds = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+  let diff = nowSeconds - orderSeconds;
+  if (diff < 0) diff += 24 * 3600;
+  return diff;
+}
+
+function formatElapsed(totalSec) {
+  if (totalSec === null) return '';
+  const hh = Math.floor(totalSec / 3600);
+  const mm = Math.floor((totalSec % 3600) / 60);
+  const ss = totalSec % 60;
+  if (hh > 0) return hh + '時間' + mm + '分' + ss + '秒経過';
+  return mm + '分' + ss + '秒経過';
+}
+
+// 5分ごとに.elapsed-badgeを再スキャンするのではなく、1秒ごとにDOM上のバッジを更新して常に最新の経過時間を表示する
+function updateElapsedTimes() {
+  document.querySelectorAll('.elapsed-badge').forEach(el => {
+    const totalSec = elapsedSeconds(el.getAttribute('data-time'));
+    el.textContent = totalSec === null ? '' : ('・ ' + formatElapsed(totalSec));
+    const mins = totalSec === null ? null : Math.floor(totalSec / 60);
+    el.style.color = (mins !== null && mins >= 20) ? 'var(--danger)' : ((mins !== null && mins >= 10) ? '#e0a458' : 'var(--ink-soft)');
+  });
+}
+
+function startAutoRefresh() {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+  autoRefreshTimer = setInterval(() => {
+    if (document.getElementById('autoRefreshCheck').checked) {
+      loadKitchenOrders(true); // バックグラウンドサイレント更新
+    }
+  }, 5000);
+}
+
+function toggleAutoRefresh() {
+  if (document.getElementById('autoRefreshCheck').checked) {
+    startAutoRefresh();
+  } else if (autoRefreshTimer) {
+    clearInterval(autoRefreshTimer);
+  }
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.innerText = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+function formatTableName(tbl) {
+  if (tbl === 'C1') return 'カウンター1';
+  if (tbl === 'C2') return 'カウンター2';
+  if (tbl === '2F') return '2F';
+  if (tbl === 'TO') return 'テイクアウト';
+  return tbl + '番卓';
+}
+
+// 5秒ごとの自動更新が通信の遅い時に重なったり、古い結果で画面が巻き戻ったりしないようにする
+let kitchenLoading = false;
+let kitchenSeq = 0;
+function loadKitchenOrders(isSilent) {
+  if (kitchenLoading && isSilent) return;
+  kitchenLoading = true;
+  const mySeq = ++kitchenSeq;
+  google.script.run.withSuccessHandler(ordersMap => {
+    kitchenLoading = false;
+    if (mySeq !== kitchenSeq) return;
+    renderKitchenBoard(ordersMap);
+    if (!isSilent) showToast('注文データを更新しました');
+  }).withFailureHandler(err => {
+    kitchenLoading = false;
+    if (!isSilent) showToast('通信エラー: ' + err.message);
+  }).getKitchenActiveOrders();
+}
+
+function renderKitchenBoard(ordersMap) {
+  const grid = document.getElementById('kitchenGrid');
+  grid.innerHTML = '';
+
+  const tables = Object.keys(ordersMap || {});
+  if (tables.length === 0) {
+    grid.innerHTML = `<div style="grid-column: 1 / -1; text-align: center; padding: 60px; color: var(--ink-soft); font-size: 16px;">現在、未調理・調理中の注文はありません ✨</div>`;
+    return;
+  }
+
+  tables.forEach(tbl => {
+    const items = ordersMap[tbl] || [];
+    if (items.length === 0) return;
+
+    const card = document.createElement('div');
+    card.className = 'table-ticket has-new';
+
+    let itemsHtml = '';
+    items.forEach(it => {
+      itemsHtml += `
+        <li class="ticket-item-row${it.served ? ' completed' : ''}">
+          <div class="ticket-item-info">
+            <span style="font-size:11px; color:var(--ink-soft); display:block;">${it.mealType} / ${it.course} <span class="elapsed-badge" data-time="${it.served ? '' : it.time}"></span></span>
+            ${it.name}
+          </div>
+          <div class="ticket-item-qty">×${it.qty}</div>
+<button type="button" class="serve-btn${it.served ? ' done' : ''}" onclick="setItemServed('${it.orderId}', ${it.served ? 'false' : 'true'})">${it.served ? '取消' : '✓ 提供済'}</button>
+        </li>
+      `;
+    });
+
+    const firstTime = items[0] ? items[0].time : '';
+    const firstTimeDisp = firstTime ? firstTime.slice(0, 5) : '';
+
+    card.innerHTML = `
+      <div>
+        <div class="ticket-header">
+          <div class="ticket-table-name">${formatTableName(tbl)}</div>
+          <div class="ticket-time">${firstTimeDisp} 受付 <span class="elapsed-badge" data-time="${firstTime}"></span></div>
+        </div>
+        <ul class="ticket-items">${itemsHtml}</ul>
+      </div>
+      <div class="ticket-footer">
+        <button type="button" class="complete-table-btn" onclick="completeTableOrders('${tbl}')">
+          ✓ ${formatTableName(tbl)} の残りをすべて提供済にする
+        </button>
+      </div>
+    `;
+
+    grid.appendChild(card);
+  });
+
+  updateElapsedTimes();
+}
+
+// 品目ごとの提供完了チェック（デザート・ドリンクなど後から出すものを個別に管理）
+function setItemServed(orderId, served) {
+  kitchenSeq++; kitchenLoading = false;
+  google.script.run.withSuccessHandler(res => {
+    if (res && res.success) {
+      loadKitchenOrders(true);
+    } else {
+      showToast('エラー: ' + (res ? res.message : '通信失敗'));
+    }
+  }).withFailureHandler(err => {
+    showToast('通信エラー: ' + err.message);
+  }).setOrderItemsServed([orderId], served);
+}
+function completeTableOrders(tableId) {
+  if (!confirm(`${formatTableName(tableId)} の残りの注文をすべて提供済にしますか？`)) return;
+  
+  kitchenSeq++; kitchenLoading = false;
+  google.script.run.withSuccessHandler(res => {
+    if (res && res.success) {
+      showToast(`${formatTableName(tableId)} の調理を完了しました`);
+      loadKitchenOrders();
+    } else {
+      showToast('エラー: ' + (res ? res.message : '通信失敗'));
+    }
+  }).withFailureHandler(err => {
+    showToast('通信エラー: ' + err.message);
+  }).markTableOrdersCompleted(tableId);
+}
+</script>
+<script>
+// アプリ版：POS画面へ戻るボタン
+(function () {
+  var a = document.createElement('a');
+  a.href = 'index.html'; a.textContent = '← POSへ';
+  a.style.cssText = 'position:fixed;right:10px;bottom:calc(10px + env(safe-area-inset-bottom));z-index:99980;background:#c8672c;color:#fff;font:700 13px "Noto Sans JP",sans-serif;padding:10px 14px;border-radius:999px;text-decoration:none;box-shadow:0 4px 16px rgba(0,0,0,.3);';
+  document.body.appendChild(a);
+})();
+</script>
+</body>
+</html>
