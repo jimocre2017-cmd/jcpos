@@ -669,7 +669,53 @@ setInterval(function () {
   try { window.refreshAllTableUnpaid(); } catch (e) {}
 }, 20000);
 
-// オフラインでも開けるように Service Worker を登録
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); });
-}
+// オフラインでも開けるように Service Worker を登録＋自動更新
+// ・起動時／画面に戻った時／15分ごとに新しい版があるか確認する
+// ・新しい版が届いたら、操作中でないタイミング（モーダルが閉じていて、カートが空で、会計処理中でない）に自動で再読み込み
+// ・送信待ちの注文は端末に保存されているので、再読み込みしても消えない
+(function () {
+  if (!('serviceWorker' in navigator)) return;
+  var hadController = !!navigator.serviceWorker.controller; // 初回インストール時は再読み込みしない
+  var updateReady = false, reloading = false, reg = null;
+
+  function isBusy() {
+    if (document.querySelector('.modal-overlay:not(.hidden)')) return true;
+    try { if (typeof cart !== 'undefined' && cart && Object.keys(cart).length) return true; } catch (e) {}
+    try { if (typeof checkoutInFlight !== 'undefined' && checkoutInFlight) return true; } catch (e) {}
+    var a = document.activeElement;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.value) return true;
+    return false;
+  }
+  function doReload() { if (reloading) return; reloading = true; location.reload(); }
+  function showBanner() {
+    if (document.getElementById('jcpos-update')) return;
+    var b = document.createElement('div');
+    b.id = 'jcpos-update';
+    b.style.cssText = 'position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:9999;background:#4a2f1f;color:#fff;padding:10px 14px;border-radius:12px;font-size:14px;box-shadow:0 4px 16px rgba(0,0,0,.25);display:flex;gap:10px;align-items:center;';
+    b.innerHTML = '<span>新しいバージョンがあります。操作が終わると自動で更新します</span><button type="button" style="background:#c8672c;color:#fff;border:none;border-radius:8px;padding:6px 12px;font-weight:700;">今すぐ更新</button>';
+    b.querySelector('button').onclick = doReload;
+    document.body.appendChild(b);
+  }
+  function tryApply() {
+    if (!updateReady || reloading) return;
+    if (!isBusy()) doReload(); else showBanner();
+  }
+  function checkUpdate() { if (reg && navigator.onLine !== false) reg.update().catch(function () {}); }
+
+  navigator.serviceWorker.addEventListener('controllerchange', function () {
+    if (!hadController) { hadController = true; return; }
+    updateReady = true;
+    tryApply();
+  });
+
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(function (r) {
+      reg = r;
+      checkUpdate();
+    }).catch(function () {});
+  });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) checkUpdate(); });
+  window.addEventListener('online', checkUpdate);
+  setInterval(checkUpdate, 15 * 60 * 1000);
+  setInterval(tryApply, 5000); // 更新待ちの間、操作が終わったか5秒ごとに確認
+})();

@@ -565,7 +565,7 @@ border-radius: 6px; padding: 6px 10px; cursor: pointer; font-weight: 700; flex-s
       <button type="button" class="checkout-btn" style="margin:6px 0 0;" onclick="submitNewCustomer()">登録する</button>
     </div>
 
-    <input type="tel" id="custSearchFilter" class="pin-input" placeholder="電話番号または氏名で検索" oninput="filterCustomerList()">
+    <input type="search" id="custSearchFilter" class="pin-input" placeholder="電話番号または氏名で検索" inputmode="text" autocomplete="off" oninput="filterCustomerList()" oncompositionend="filterCustomerList()">
 
     <div id="customerListDisplay" style="max-height: 280px; overflow-y: auto; margin-top:8px;"></div>
     <button type="button" class="modal-close-btn" onclick="closeModal('customerManageModal')">閉じる</button>
@@ -1115,15 +1115,23 @@ function renderCustomerList(list) {
   });
 }
 
+function normalizeCustQuery_(s) {
+  // ひらがな→カタカナ、全角英数→半角、空白・ハイフン除去、小文字化（カナ・漢字・電話番号を同じ基準で照合する）
+  return String(s || '')
+    .replace(/[\u3041-\u3096]/g, ch => String.fromCharCode(ch.charCodeAt(0) + 0x60))
+    .replace(/[\uFF01-\uFF5E]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+    .replace(/[\s\u3000\-‐－]/g, '')
+    .toLowerCase();
+}
+
 function filterCustomerList() {
-  const query = document.getElementById('custSearchFilter').value.trim().toLowerCase();
+  const query = normalizeCustQuery_(document.getElementById('custSearchFilter').value);
   if (!query) {
     renderCustomerList(cachedCustomers);
     return;
   }
   const filtered = cachedCustomers.filter(c =>
-    c.name.toLowerCase().includes(query) || c.phone.includes(query) ||
-    c.sei.toLowerCase().includes(query) || c.mei.toLowerCase().includes(query)
+    normalizeCustQuery_([c.name, c.sei, c.mei, c.phone].join(' ')).includes(query)
   );
   renderCustomerList(filtered);
 }
