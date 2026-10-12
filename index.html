@@ -345,6 +345,7 @@ border-radius: 6px; padding: 6px 10px; cursor: pointer; font-weight: 700; flex-s
     <button type="button" class="reg-customer-btn" onclick="openAnalyticsModal()">分析</button>
     <button type="button" class="reg-customer-btn" onclick="openSeasonModal()">季節</button>
     <button type="button" class="reg-customer-btn" onclick="openCancelModal()">取消/修正</button>
+    <button type="button" class="reg-customer-btn" onclick="openBackfillModal()">後入れ</button>
     <div id="staffBadge" style="font-size:11px; color:var(--ink-soft); text-decoration:underline; cursor:pointer; margin-left:2px;" onclick="openStaffModal()">担当: 髙橋</div>
   </div>
 </header>
@@ -2646,6 +2647,283 @@ function renderReservations(list) {
 <script>
 // アプリ版：厨房画面は同じアプリの中で開く（iPhoneのホーム画面アプリから別ウィンドウで開くと設定が引き継がれないため）
 window.openKitchenView = function () { location.href = 'kitchen.html'; };
+</script>
+
+<!-- ===== 後入れ会計モーダル（POSに入れ忘れた会計を後から記録） ===== -->
+<style>
+.bf-step { border:1px solid var(--border); border-radius:12px; padding:10px 12px; margin-bottom:10px; background:var(--bg); }
+.bf-step-title { font-size:12px; font-weight:800; color:var(--brown); margin-bottom:6px; }
+.bf-row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+.bf-input { padding:8px 10px; border:1px solid var(--border); border-radius:10px; font-size:14px; background:var(--surface); color:var(--ink); }
+.bf-chip { padding:7px 11px; border:1px solid var(--border); border-radius:999px; background:var(--surface); font-size:13px; font-weight:700; cursor:pointer; color:var(--ink); }
+.bf-chip.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+.bf-cands { max-height:160px; overflow-y:auto; margin-top:6px; }
+.bf-cand { padding:7px 9px; border-bottom:1px solid var(--border); cursor:pointer; font-size:13px; }
+.bf-cand:hover { background:var(--accent-soft); }
+.bf-menu-list { max-height:240px; overflow-y:auto; margin-top:6px; border:1px solid var(--border); border-radius:10px; background:var(--surface); }
+.bf-menu-item { display:flex; justify-content:space-between; padding:8px 10px; border-bottom:1px solid var(--border); cursor:pointer; font-size:13px; }
+.bf-menu-item:hover { background:var(--accent-soft); }
+.bf-cart-line { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:6px 0; border-bottom:1px dashed var(--border); font-size:13px; }
+.bf-qty { display:flex; align-items:center; gap:4px; }
+.bf-qty button { width:28px; height:28px; border-radius:8px; border:1px solid var(--border); background:var(--surface); font-weight:800; cursor:pointer; }
+.bf-total { font-size:18px; font-weight:800; text-align:right; margin-top:8px; color:var(--ink); }
+.bf-note { font-size:11px; color:var(--ink-soft); margin-top:4px; }
+.bf-submit { display:block; width:100%; padding:14px; border-radius:12px; border:none; background:var(--accent); color:#fff; font-size:15px; font-weight:800; cursor:pointer; margin-top:6px; }
+.bf-submit:disabled { opacity:.5; cursor:default; }
+</style>
+
+<div id="backfillModal" class="modal-overlay hidden">
+  <div class="modal-sheet">
+    <div style="font-size:16px;font-weight:800;margin-bottom:4px;">後入れ会計</div>
+    <div class="bf-note" style="margin-bottom:10px;">POSに入れ忘れた会計を、日時を指定して売上に記録します。テーブル・厨房画面には影響しません。</div>
+
+    <div class="bf-step">
+      <div class="bf-step-title">① 会計日時</div>
+      <div class="bf-row">
+        <input type="date" id="bfDate" class="bf-input">
+        <input type="time" id="bfTime" class="bf-input" step="60">
+      </div>
+      <div class="bf-row" style="margin-top:6px;">
+        <span class="bf-chip" onclick="bfQuickDate(1)">昨日</span>
+        <span class="bf-chip" onclick="bfQuickDate(0)">今日</span>
+        <span class="bf-chip" onclick="bfQuickTime('12:30')">12:30</span>
+        <span class="bf-chip" onclick="bfQuickTime('19:00')">19:00</span>
+      </div>
+    </div>
+
+    <div class="bf-step">
+      <div class="bf-step-title">② お客様</div>
+      <div class="bf-row">
+        <span class="bf-chip on" id="bfWalkinChip" onclick="bfSetWalkin()">ウォークイン</span>
+        <input type="text" id="bfCustSearch" class="bf-input" style="flex:1;min-width:140px;" placeholder="顧客リストから検索（名前・電話下4桁）" oninput="bfSearchCustomer()">
+      </div>
+      <div id="bfCustSelected" class="bf-note" style="font-size:13px;font-weight:700;color:var(--ink);"></div>
+      <div id="bfCustCands" class="bf-cands"></div>
+    </div>
+
+    <div class="bf-step">
+      <div class="bf-step-title">③ 人数</div>
+      <div class="bf-row" id="bfPeopleChips"></div>
+    </div>
+
+    <div class="bf-step">
+      <div class="bf-step-title">④ テーブル</div>
+      <div class="bf-row" id="bfTableChips"></div>
+    </div>
+
+    <div class="bf-step">
+      <div class="bf-step-title">⑤ 商品</div>
+      <input type="text" id="bfMenuSearch" class="bf-input" style="width:100%;box-sizing:border-box;" placeholder="メニュー名で検索" oninput="bfRenderMenu()">
+      <div id="bfMenuList" class="bf-menu-list"></div>
+      <div id="bfCart" style="margin-top:8px;"></div>
+      <div class="bf-total">合計 ¥<span id="bfTotal">0</span></div>
+    </div>
+
+    <div class="bf-step">
+      <div class="bf-step-title">⑥ 会計</div>
+      <div class="bf-row" id="bfPayChips"></div>
+      <div class="bf-row" style="margin-top:8px;">
+        <span style="font-size:12px;">区分</span>
+        <select id="bfSection" class="bf-input">
+          <option value="">自動（商品・時刻から判定）</option>
+          <option>ランチ</option><option>ディナー</option><option>テイクアウト</option>
+        </select>
+        <span style="font-size:12px;">担当</span>
+        <select id="bfStaff" class="bf-input"></select>
+      </div>
+      <button type="button" id="bfSubmitBtn" class="bf-submit" onclick="bfSubmit()">この内容で後入れ会計を記録する</button>
+    </div>
+
+    <button type="button" class="modal-close-btn" onclick="closeModal('backfillModal')">閉じる</button>
+  </div>
+</div>
+
+<script>
+const BF_TABLES = ['1', '2', '3', '4', '5', '6', 'C1', 'C2', '2F', 'TO'];
+const BF_PAYS = ['現金', 'PayPay', 'クレジット', 'OnPay', '地域通貨'];
+let bfState = null;
+
+function bfEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function bfPad(n) { return ('0' + n).slice(-2); }
+
+function openBackfillModal() {
+  bfState = { customer: null, people: 1, table: '', pay: '現金', cart: [], requestId: newRequestId() };
+  bfQuickDate(1);
+  document.getElementById('bfTime').value = '';
+  document.getElementById('bfCustSearch').value = '';
+  document.getElementById('bfMenuSearch').value = '';
+  document.getElementById('bfSection').value = '';
+  bfSetWalkin();
+  bfRenderChips();
+  const staffSel = document.getElementById('bfStaff');
+  const staffs = (typeof staffList !== 'undefined' && staffList && staffList.length) ? staffList : [currentStaff];
+  staffSel.innerHTML = staffs.map(s => `<option ${s === currentStaff ? 'selected' : ''}>${bfEsc(s)}</option>`).join('');
+  if (!allMenus || !allMenus.length) {
+    gsRun().withSuccessHandler(list => { allMenus = list || []; bfRenderMenu(); }).getMenuList();
+  }
+  if (typeof customerLookupList === 'undefined' || !customerLookupList || !customerLookupList.length) {
+    preloadCustomerLookup();
+  }
+  bfRenderMenu();
+  bfRenderCart();
+  document.getElementById('bfSubmitBtn').disabled = false;
+  document.getElementById('backfillModal').classList.remove('hidden');
+}
+
+function bfQuickDate(daysAgo) {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  document.getElementById('bfDate').value = d.getFullYear() + '-' + bfPad(d.getMonth() + 1) + '-' + bfPad(d.getDate());
+}
+function bfQuickTime(t) { document.getElementById('bfTime').value = t; }
+
+function bfSetWalkin() {
+  bfState.customer = null;
+  document.getElementById('bfWalkinChip').classList.add('on');
+  document.getElementById('bfCustSelected').innerText = '';
+  document.getElementById('bfCustCands').innerHTML = '';
+  document.getElementById('bfCustSearch').value = '';
+}
+
+function bfSearchCustomer() {
+  const q = document.getElementById('bfCustSearch').value.trim();
+  const box = document.getElementById('bfCustCands');
+  if (!q) { box.innerHTML = ''; return; }
+  const list = (typeof customerLookupList !== 'undefined' && customerLookupList) ? customerLookupList : [];
+  const qDigits = q.replace(/\D/g, '');
+  const hits = list.filter(c => {
+    const name = String(c.name || '');
+    const phone = String(c.phone || '').replace(/\D/g, '');
+    return name.indexOf(q) >= 0 || (qDigits.length >= 3 && phone.indexOf(qDigits) >= 0);
+  }).slice(0, 30);
+  box.innerHTML = hits.length
+    ? hits.map((c, i) => `<div class="bf-cand" data-i="${i}">${bfEsc(c.name || '(名前なし)')}　<span style="color:var(--ink-soft)">${bfEsc(String(c.phone || '').slice(-4) ? '…' + String(c.phone).replace(/\D/g, '').slice(-4) : '')}　来店${Number(c.visits || 0)}回</span></div>`).join('')
+    : '<div class="bf-note">該当なし（ウォークインで記録できます）</div>';
+  box.querySelectorAll('.bf-cand').forEach(el => {
+    el.onclick = () => {
+      const c = hits[Number(el.dataset.i)];
+      bfState.customer = { phone: String(c.phone || ''), name: String(c.name || '') };
+      document.getElementById('bfWalkinChip').classList.remove('on');
+      document.getElementById('bfCustSelected').innerText = '選択中：' + (c.name || '') + ' 様';
+      box.innerHTML = '';
+    };
+  });
+}
+
+function bfRenderChips() {
+  const pc = document.getElementById('bfPeopleChips');
+  pc.innerHTML = [0, 1, 2, 3, 4, 5, 6, 7, 8].map(n => `<span class="bf-chip ${bfState.people === n ? 'on' : ''}" data-n="${n}">${n === 0 ? '0名（同じ組の別会計）' : n + '名'}</span>`).join('')
+    + `<input type="number" min="1" id="bfPeopleCustom" class="bf-input" style="width:64px;" placeholder="9+" value="${bfState.people > 8 ? bfState.people : ''}">`;
+  pc.querySelectorAll('.bf-chip').forEach(el => el.onclick = () => { bfState.people = Number(el.dataset.n); bfRenderChips(); });
+  document.getElementById('bfPeopleCustom').onchange = e => { const n = Number(e.target.value); if (n > 0) { bfState.people = n; bfRenderChips(); } };
+
+  const tc = document.getElementById('bfTableChips');
+  tc.innerHTML = BF_TABLES.map(t => `<span class="bf-chip ${bfState.table === t ? 'on' : ''}" data-t="${t}">${t === 'TO' ? 'TO(テイクアウト)' : t}</span>`).join('');
+  tc.querySelectorAll('.bf-chip').forEach(el => el.onclick = () => { bfState.table = el.dataset.t; bfRenderChips(); });
+
+  const yc = document.getElementById('bfPayChips');
+  yc.innerHTML = BF_PAYS.map(p => `<span class="bf-chip ${bfState.pay === p ? 'on' : ''}" data-p="${p}">${p}</span>`).join('');
+  yc.querySelectorAll('.bf-chip').forEach(el => el.onclick = () => { bfState.pay = el.dataset.p; bfRenderChips(); });
+}
+
+function bfRenderMenu() {
+  const q = document.getElementById('bfMenuSearch').value.trim();
+  const box = document.getElementById('bfMenuList');
+  const list = (allMenus || []).filter(m => {
+    const name = String(m['メニュー名'] || '');
+    if (!name) return false;
+    if (String(m['有効']).toUpperCase() === 'FALSE') return false;
+    return !q || name.indexOf(q) >= 0 || String(m['カテゴリ'] || '').indexOf(q) >= 0;
+  });
+  box.innerHTML = list.length
+    ? list.map((m, i) => `<div class="bf-menu-item" data-i="${i}"><span>${bfEsc(m['メニュー名'])} <span style="color:var(--ink-soft);font-size:11px;">${bfEsc(m['区分'] || '')}</span></span><strong>¥${Number(m['価格'] || 0).toLocaleString()}</strong></div>`).join('')
+    : '<div class="bf-note" style="padding:8px;">メニューを読み込み中、または該当なし</div>';
+  box.querySelectorAll('.bf-menu-item').forEach(el => el.onclick = () => bfAddItem(list[Number(el.dataset.i)]));
+}
+
+function bfAddItem(m) {
+  const name = String(m['メニュー名']);
+  const price = Number(m['価格'] || 0);
+  const ex = bfState.cart.find(c => c.name === name && c.price === price);
+  if (ex) ex.qty++;
+  else bfState.cart.push({ name: name, price: price, qty: 1, section: String(m['区分'] || '') });
+  bfRenderCart();
+}
+
+function bfRenderCart() {
+  const box = document.getElementById('bfCart');
+  box.innerHTML = bfState.cart.map((c, i) => `
+    <div class="bf-cart-line">
+      <span style="flex:1;">${bfEsc(c.name)}</span>
+      <input type="number" class="bf-input" style="width:80px;padding:4px 6px;" data-price="${i}" value="${c.price}">
+      <span class="bf-qty"><button type="button" data-dec="${i}">−</button><strong>${c.qty}</strong><button type="button" data-inc="${i}">＋</button></span>
+    </div>`).join('') || '<div class="bf-note">上のリストから商品をタップして追加</div>';
+  box.querySelectorAll('[data-dec]').forEach(b => b.onclick = () => { const i = Number(b.dataset.dec); bfState.cart[i].qty--; if (bfState.cart[i].qty <= 0) bfState.cart.splice(i, 1); bfRenderCart(); });
+  box.querySelectorAll('[data-inc]').forEach(b => b.onclick = () => { bfState.cart[Number(b.dataset.inc)].qty++; bfRenderCart(); });
+  box.querySelectorAll('[data-price]').forEach(inp => inp.onchange = () => { bfState.cart[Number(inp.dataset.price)].price = Math.max(0, Math.round(Number(inp.value) || 0)); bfRenderCart(); });
+  document.getElementById('bfTotal').innerText = bfState.cart.reduce((s, c) => s + c.price * c.qty, 0).toLocaleString();
+}
+
+function bfSubmit() {
+  const date = document.getElementById('bfDate').value;
+  const time = document.getElementById('bfTime').value;
+  if (!date || !time) { showToast('会計日時（日付と時刻）を入れてください'); return; }
+  if (!bfState.table) { showToast('テーブルを選んでください'); return; }
+  if (!bfState.cart.length) { showToast('商品を追加してください'); return; }
+  const total = bfState.cart.reduce((s, c) => s + c.price * c.qty, 0);
+  const custLabel = bfState.customer ? bfState.customer.name + ' 様' : 'ウォークイン';
+  const lines = bfState.cart.map(c => `・${c.name} ×${c.qty}　¥${(c.price * c.qty).toLocaleString()}`).join('\n');
+  const msg = `以下の内容で後入れ会計を記録します。\n\n${date.replace(/-/g, '/')} ${time}\n${custLabel} / ${bfState.people}名 / ${bfState.table}卓\n${lines}\n合計 ¥${total.toLocaleString()}（${bfState.pay}）`;
+  bfConfirm(msg, () => {
+    const btn = document.getElementById('bfSubmitBtn');
+    btn.disabled = true;
+    showLoadingMask('後入れ会計を記録中...');
+    gsRun().withSuccessHandler(res => {
+      hideLoadingMask();
+      btn.disabled = false;
+      if (res && res.success) {
+        showToast(`後入れ会計を記録しました（${res.dateTime} / ¥${Number(res.total).toLocaleString()} / ${res.section}）`);
+        closeModal('backfillModal');
+        try { preloadCustomerLookup(); } catch (e) {}
+      } else {
+        showToast((res && res.message) || '記録に失敗しました');
+      }
+    }).processBackfillCheckout({
+      requestId: bfState.requestId,
+      at: date + ' ' + time,
+      customer: bfState.customer,
+      people: bfState.people,
+      tableId: bfState.table,
+      items: bfState.cart,
+      payMethod: bfState.pay,
+      section: document.getElementById('bfSection').value,
+      staff: document.getElementById('bfStaff').value
+    });
+  });
+}
+
+// ブラウザ標準の confirm() はアプリ版で止まることがあるため、画面内の確認表示を使う
+function bfConfirm(text, onOk) {
+  let ov = document.getElementById('bfConfirmOverlay');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'bfConfirmOverlay';
+    ov.className = 'modal-overlay';
+    ov.style.zIndex = 200;
+    ov.style.alignItems = 'center';
+    document.body.appendChild(ov);
+  }
+  ov.innerHTML = `<div class="modal-sheet" style="border-radius:20px;max-width:420px;margin:16px;">
+      <div style="white-space:pre-wrap;font-size:13px;line-height:1.6;">${bfEsc(text)}</div>
+      <button type="button" class="bf-submit" id="bfConfirmOk">記録する</button>
+      <button type="button" class="modal-close-btn" id="bfConfirmNg">戻る</button>
+    </div>`;
+  ov.classList.remove('hidden');
+  document.getElementById('bfConfirmNg').onclick = () => ov.classList.add('hidden');
+  document.getElementById('bfConfirmOk').onclick = () => { ov.classList.add('hidden'); onOk(); };
+}
 </script>
 </body>
 </html>

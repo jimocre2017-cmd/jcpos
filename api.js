@@ -455,7 +455,7 @@ var JCPOS = (function () {
     verifyAdminPin: '顧客管理', getCustomerList: '顧客管理', registerNewCustomer: '顧客の新規登録',
     getSalesAnalytics: '売上分析', getCheckoutsByDate: '会計の取消・修正', cancelCheckout: '会計の取消',
     updateCheckoutFields: '会計の修正', getCheckoutDetails: '会計の修正', updateCheckoutDetailItem: '会計の修正',
-    toggleSeasonItemAvailability: '季節メニューの切替', setOrderItemsServed: '提供済の記録', markTableOrdersCompleted: '提供済の記録'
+    toggleSeasonItemAvailability: '季節メニューの切替', processBackfillCheckout: '後入れ会計', setOrderItemsServed: '提供済の記録', markTableOrdersCompleted: '提供済の記録'
   };
 
   function call(fn, args) {

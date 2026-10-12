@@ -7,7 +7,7 @@
  * - 画面を更新したら VERSION を上げる。端末側（api.js）が定期的にこのファイルを確認し、
  *   VERSION が変わっていれば自動で新しい版に切り替わる（再インストール不要）。
  */
-var VERSION = 'jcpos-v2';
+var VERSION = 'jcpos-v3';
 var FILES = ['./', './index.html', './kitchen.html', './api.js', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png'];
 var FONT_CACHE = 'jcpos-fonts';
 var NET_TIMEOUT_MS = 4000; // これ以上かかったら保存版で表示（電波が弱い時も待たせない）
