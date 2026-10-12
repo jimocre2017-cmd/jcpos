@@ -2713,8 +2713,15 @@ window.openKitchenView = function () { location.href = 'kitchen.html'; };
 
     <div class="bf-step">
       <div class="bf-step-title">⑤ 商品</div>
+      <div class="bf-row" id="bfSecChips"></div>
+      <div class="bf-row" id="bfCatChips" style="margin-top:6px;margin-bottom:6px;"></div>
       <input type="text" id="bfMenuSearch" class="bf-input" style="width:100%;box-sizing:border-box;" placeholder="メニュー名で検索" oninput="bfRenderMenu()">
       <div id="bfMenuList" class="bf-menu-list"></div>
+      <div class="bf-row" style="margin-top:8px;">
+        <input type="text" id="bfFreeName" class="bf-input" style="flex:1;min-width:120px;" placeholder="メニューにない商品名">
+        <input type="number" id="bfFreePrice" class="bf-input" style="width:90px;" placeholder="金額">
+        <span class="bf-chip" onclick="bfAddFree()">＋追加</span>
+      </div>
       <div id="bfCart" style="margin-top:8px;"></div>
       <div class="bf-total">合計 ¥<span id="bfTotal">0</span></div>
     </div>
@@ -2749,7 +2756,9 @@ function bfEsc(s) {
 function bfPad(n) { return ('0' + n).slice(-2); }
 
 function openBackfillModal() {
-  bfState = { customer: null, people: 1, table: '', pay: '現金', cart: [], requestId: newRequestId() };
+  bfState = { customer: null, people: 1, table: '', pay: '現金', cart: [], secFilter: '', catFilter: '', requestId: newRequestId() };
+  document.getElementById('bfFreeName').value = '';
+  document.getElementById('bfFreePrice').value = '';
   bfQuickDate(1);
   document.getElementById('bfTime').value = '';
   document.getElementById('bfCustSearch').value = '';
@@ -2828,13 +2837,37 @@ function bfRenderChips() {
   yc.querySelectorAll('.bf-chip').forEach(el => el.onclick = () => { bfState.pay = el.dataset.p; bfRenderChips(); });
 }
 
+function bfActiveMenus() {
+  return (allMenus || []).filter(m => String(m['メニュー名'] || '') && String(m['有効']).toUpperCase() !== 'FALSE');
+}
+
+function bfUniq(arr) {
+  const out = [];
+  arr.forEach(v => { v = String(v || '').trim(); if (v && out.indexOf(v) < 0) out.push(v); });
+  return out;
+}
+
+// 区分（ランチ・ディナー・テイクアウト・ドリンク等）とカテゴリ（溶岩焼き・パスタ・ピザ等）で絞り込む
+function bfRenderFilters() {
+  const menus = bfActiveMenus();
+  const secs = bfUniq(menus.map(m => m['区分']));
+  const sc = document.getElementById('bfSecChips');
+  sc.innerHTML = ['', ...secs].map(v => `<span class="bf-chip ${bfState.secFilter === v ? 'on' : ''}" data-v="${bfEsc(v)}">${v ? bfEsc(v) : 'すべて'}</span>`).join('');
+  sc.querySelectorAll('.bf-chip').forEach(el => el.onclick = () => { bfState.secFilter = el.dataset.v; bfState.catFilter = ''; bfRenderMenu(); });
+  const cats = bfUniq(menus.filter(m => !bfState.secFilter || String(m['区分'] || '').trim() === bfState.secFilter).map(m => m['カテゴリ']));
+  const cc = document.getElementById('bfCatChips');
+  cc.innerHTML = ['', ...cats].map(v => `<span class="bf-chip ${bfState.catFilter === v ? 'on' : ''}" data-v="${bfEsc(v)}" style="font-size:12px;padding:5px 9px;">${v ? bfEsc(v) : '全カテゴリ'}</span>`).join('');
+  cc.querySelectorAll('.bf-chip').forEach(el => el.onclick = () => { bfState.catFilter = el.dataset.v; bfRenderMenu(); });
+}
+
 function bfRenderMenu() {
+  bfRenderFilters();
   const q = document.getElementById('bfMenuSearch').value.trim();
   const box = document.getElementById('bfMenuList');
-  const list = (allMenus || []).filter(m => {
+  const list = bfActiveMenus().filter(m => {
     const name = String(m['メニュー名'] || '');
-    if (!name) return false;
-    if (String(m['有効']).toUpperCase() === 'FALSE') return false;
+    if (bfState.secFilter && String(m['区分'] || '').trim() !== bfState.secFilter) return false;
+    if (bfState.catFilter && String(m['カテゴリ'] || '').trim() !== bfState.catFilter) return false;
     return !q || name.indexOf(q) >= 0 || String(m['カテゴリ'] || '').indexOf(q) >= 0;
   });
   box.innerHTML = list.length
@@ -2849,6 +2882,19 @@ function bfAddItem(m) {
   const ex = bfState.cart.find(c => c.name === name && c.price === price);
   if (ex) ex.qty++;
   else bfState.cart.push({ name: name, price: price, qty: 1, section: String(m['区分'] || '') });
+  bfRenderCart();
+}
+
+// メニューにない商品を、商品名と金額だけで追加する
+function bfAddFree() {
+  const name = document.getElementById('bfFreeName').value.trim();
+  const priceStr = document.getElementById('bfFreePrice').value;
+  const price = Math.round(Number(priceStr));
+  if (!name) { showToast('商品名を入れてください'); return; }
+  if (priceStr === '' || isNaN(price) || price < 0) { showToast('金額を入れてください'); return; }
+  bfState.cart.push({ name: name, price: price, qty: 1, section: bfState.secFilter || '' });
+  document.getElementById('bfFreeName').value = '';
+  document.getElementById('bfFreePrice').value = '';
   bfRenderCart();
 }
 
