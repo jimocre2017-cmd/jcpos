@@ -2329,7 +2329,11 @@ function openCustLinkPicker(party) {
   ov.innerHTML = '<div class="modal-sheet"><h3 style="margin-top:0;">顧客を紐付け</h3>' +
     '<div style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;">' + esc(party.time) + ' ／ ' + (party.table ? esc(formatTableName(party.table)) : '卓なし') + (party.people ? ' ／ ' + esc(party.people) + '名' : '') + ' ／ ¥' + Number(party.amount || 0).toLocaleString() + '</div>' +
     '<input type="text" id="custLinkQuery" class="pin-input" placeholder="電話番号の下4桁・カナ・氏名で検索" style="width:100%; box-sizing:border-box; margin-bottom:8px;">' +
-    '<div id="custLinkResults" style="max-height:45vh; overflow:auto;"></div>' +
+    '<div id="custLinkResults" style="max-height:30vh; overflow:auto;"></div>' +
+    '<div style="margin-top:10px; padding-top:8px; border-top:1px solid var(--border);"><div style="font-size:12px; font-weight:700; margin-bottom:4px;">初めてのお客様（新規登録して紐付け）</div>' +
+    '<input type="text" id="custNewName" class="pin-input" placeholder="氏名（例：山田 太郎）" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' +
+    '<input type="tel" id="custNewPhone" class="pin-input" placeholder="電話番号（例：09012345678）" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' +
+    '<button type="button" class="reg-customer-btn" id="custNewBtn" style="width:100%;">新規登録して紐付け</button></div>' +
     '<button type="button" class="modal-close-btn" id="custLinkClose">閉じる</button></div>';
   ov.classList.remove('hidden');
   const renderResults = function () {
@@ -2365,6 +2369,27 @@ function openCustLinkPicker(party) {
   };
   document.getElementById('custLinkQuery').addEventListener('input', renderResults);
   document.getElementById('custLinkClose').addEventListener('click', function () { ov.classList.add('hidden'); });
+  document.getElementById('custNewBtn').addEventListener('click', function () {
+    const nm = String(document.getElementById('custNewName').value || '').replace(/\u3000/g, ' ').trim();
+    const ph = String(document.getElementById('custNewPhone').value || '').replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }).replace(/[^0-9]/g, '');
+    if (!nm) { showToast('氏名を入力してください'); return; }
+    if (ph.length < 10 || ph.length > 11) { showToast('電話番号は10〜11桁で入力してください'); return; }
+    const dup = (customerLookupList || []).filter(function (c) { return String(c.phone || '').replace(/[^0-9]/g, '') === ph; })[0];
+    if (dup) { showToast('その電話番号は登録済みです（' + ((dup.sei || '') + ' ' + (dup.mei || '')).trim() + '様）。上の検索から選んでください'); return; }
+    if (!window.confirm(nm + '様（' + ph + '）を新規登録して、この会計に紐付けますか？')) return;
+    showLoadingMask('登録中...');
+    gsRun().withSuccessHandler(function (res) {
+      hideLoadingMask();
+      if (res && res.success) {
+        ov.classList.add('hidden');
+        showToast(nm + '様を登録して紐付けました');
+        loadDayParties(currentAnalyticsPeriod);
+        try { preloadCustomerLookup(); } catch (e) {}
+      } else {
+        showToast('エラー: ' + (res ? res.message : '通信失敗'));
+      }
+    }).linkCheckoutCustomer(party.id, ph, nm);
+  });
   renderResults();
 }
 
