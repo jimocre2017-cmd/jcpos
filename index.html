@@ -355,6 +355,7 @@ border-radius: 6px; padding: 6px 10px; cursor: pointer; font-weight: 700; flex-s
     <div class="reservation-current" id="currentResLabel">予約: なし（ウォークイン）</div>
     <button type="button" onclick="openReservationModal()">予約選択</button>
     <button type="button" onclick="changeTablePeopleCount()">人数変更</button>
+    <button type="button" onclick="openCustHistoryForTable()">来店履歴</button>
     <button type="button" onclick="openCustomerAuthModal()">顧客管理</button>
   </div>
 
@@ -2271,6 +2272,49 @@ function applyAnalyticsView(period) {
     x[0].style.color = on ? '#fff' : '';
   });
 }
+// 来店履歴（初回・最終来店日、来店回数、前回の注文内容）。卓の顧客／組別明細の両方から使う
+function openCustHistoryForTable() {
+  const items = (typeof unpaidItemsMap !== 'undefined' && unpaidItemsMap[currentTable]) || [];
+  const info = getTableCustomerInfo(currentTable, items) || {};
+  if (!info.phone) { showToast('この卓には電話番号つきの顧客情報がありません（予約選択か顧客入力後に押してください）'); return; }
+  openCustHistory(info.phone, info.name || ((info.sei || '') + ' ' + (info.mei || '')).trim(), '');
+}
+
+function openCustHistory(phone, name, beforeDate) {
+  let ov = document.getElementById('custHistModal');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'custHistModal';
+    ov.className = 'modal-overlay hidden';
+    ov.style.zIndex = '10060';
+    document.body.appendChild(ov);
+  }
+  const esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  const close = function () { ov.classList.add('hidden'); };
+  ov.innerHTML = '<div class="modal-sheet"><h3 style="margin-top:0;">' + esc(name || '顧客') + '様 の来店履歴</h3><div id="custHistBody" style="font-size:13px;">読み込み中...</div><button type="button" class="modal-close-btn" id="custHistClose">閉じる</button></div>';
+  ov.classList.remove('hidden');
+  document.getElementById('custHistClose').addEventListener('click', close);
+  gsRun().withSuccessHandler(function (r) {
+    const body = document.getElementById('custHistBody');
+    if (!body) return;
+    if (!r || !r.success) { body.innerHTML = '<div style="color:var(--danger);">' + esc((r && r.message) || '取得に失敗しました') + '</div>'; return; }
+    const row = function (k, v) { return '<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border);"><span style="color:var(--ink-soft);">' + k + '</span><strong>' + esc(v || '—') + '</strong></div>'; };
+    let h = row('初回来店日', r.firstVisit) + row('最終来店日', r.lastVisit) + row('トータル来店回数', r.visitCount ? r.visitCount + '回' : '');
+    if (!r.visits || !r.visits.length) {
+      h += '<div style="margin-top:10px; color:var(--ink-soft);">これより前の来店記録（注文内容）はありません</div>';
+    } else {
+      h += '<div style="margin:12px 0 4px; font-weight:700; color:var(--brown);">前回までのご注文</div>' + r.visits.map(function (v, i) {
+        const items = (v.items || []).map(function (it) { return esc(it.name) + ' ×' + esc(it.qty); }).join('、') || '（明細なし）';
+        return '<div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:8px 10px; margin-bottom:6px;"><div style="font-size:12px; font-weight:700;">' + (i === 0 ? '前回 ' : '') + esc(v.date) + ' ／ ' + esc(v.section) + (v.people ? ' ／ ' + esc(v.people) + '名' : '') + ' ／ ¥' + Number(v.amount || 0).toLocaleString() + '</div><div style="font-size:11px; color:var(--ink-soft); margin-top:3px; line-height:1.5;">' + items + '</div></div>';
+      }).join('');
+    }
+    body.innerHTML = h;
+  }).withFailureHandler(function () {
+    const body = document.getElementById('custHistBody');
+    if (body) body.innerHTML = '<div style="color:var(--danger);">通信に失敗しました</div>';
+  }).getCustomerHistory(phone, beforeDate);
+}
+
 // 組別明細の1組に、顧客リストの顧客を紐付ける（電話番号の入っていない会計のみ）
 function openCustLinkPicker(party) {
   let ov = document.getElementById('custLinkModal');
@@ -2341,9 +2385,17 @@ function loadDayParties(period) {
       const items = (p.items || []).map(function (it) { return esc(it.name) + ' ×' + esc(it.qty); }).join('、') || '（明細なし）';
       return '<div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:8px 10px; margin-bottom:6px;">' +
         '<div style="display:flex; justify-content:space-between; font-size:12px; font-weight:700;"><span>' + head + '</span><span>¥' + Number(p.amount || 0).toLocaleString() + '（' + esc(p.pay) + '）</span></div>' +
-        (p.hasPhone ? '' : '<div style="margin-top:4px;"><button type="button" class="reg-customer-btn" data-link-id="' + esc(p.id) + '" style="font-size:11px; padding:3px 10px;">顧客を紐付け</button></div>') +
+        '<div style="margin-top:4px; display:flex; gap:6px;">' +
+          (p.hasPhone ? '' : '<button type="button" class="reg-customer-btn" data-link-id="' + esc(p.id) + '" style="font-size:11px; padding:3px 10px;">顧客を紐付け</button>') +
+          (p.phone ? '<button type="button" class="reg-customer-btn" data-hist-id="' + esc(p.id) + '" style="font-size:11px; padding:3px 10px;">来店履歴</button>' : '') + '</div>' +
         '<div style="font-size:11px; color:var(--ink-soft); margin-top:3px; line-height:1.5;">' + esc(p.section) + '：' + items + '</div></div>';
     }).join('');
+    box.querySelectorAll('button[data-hist-id]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const party = list.filter(function (x) { return String(x.id) === b.getAttribute('data-hist-id'); })[0];
+        if (party) openCustHistory(party.phone, party.name, (res && res.date) || '');
+      });
+    });
     box.querySelectorAll('button[data-link-id]').forEach(function (b) {
       b.addEventListener('click', function () {
         const party = list.filter(function (x) { return String(x.id) === b.getAttribute('data-link-id'); })[0];
