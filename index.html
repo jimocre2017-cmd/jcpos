@@ -1113,6 +1113,12 @@ function renderCustomerList(list) {
       </div>
       <button type="button" class="reg-customer-btn" style="color:var(--brown);">選択</button>
     `;
+    if (c.phone) {
+      const hb = document.createElement('button');
+      hb.type = 'button'; hb.className = 'reg-customer-btn'; hb.style.cssText = 'font-size:11px; padding:3px 8px; margin-left:8px;'; hb.textContent = '履歴・メモ';
+      hb.onclick = function (e) { e.stopPropagation(); openCustHistory(c.phone, ((c.sei || '') + ' ' + (c.mei || '')).trim(), ''); };
+      row.appendChild(hb);
+    }
     row.onclick = () => {
       currentCustomer = c;
       const resLabel = document.getElementById('currentResLabel');
@@ -2280,6 +2286,44 @@ function openCustHistoryForTable() {
   openCustHistory(info.phone, info.name || ((info.sei || '') + ' ' + (info.mei || '')).trim(), '');
 }
 
+// お客様の特徴（性別・見た目・その他）と、反応・会話メモの入力欄
+function custProfileHtml_(r, esc) {
+  const p = r.profile || {};
+  const gsel = ['', '女性', '男性', 'その他'].map(function (g) { return '<option value="' + g + '"' + (p.gender === g ? ' selected' : '') + '>' + (g || '性別：未設定') + '</option>'; }).join('');
+  const notes = (r.notes || []).map(function (n) { return '<div style="padding:4px 0; border-bottom:1px solid var(--border); font-size:12px;"><span style="color:var(--ink-soft);">' + esc(n.date) + '</span>　' + esc(n.note) + '</div>'; }).join('') || '<div style="font-size:12px; color:var(--ink-soft);">まだメモはありません</div>';
+  return '<div style="margin:12px 0 4px; font-weight:700; color:var(--brown);">お客様の特徴</div>' +
+    '<select id="custPfGender" class="pin-input" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' + gsel + '</select>' +
+    '<input type="text" id="custPfTraits" class="pin-input" placeholder="特徴（例：高身長・メガネ・黒髪ロング）" value="' + esc(p.traits || '') + '" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' +
+    '<textarea id="custPfOther" class="pin-input" rows="2" placeholder="その他（好み・アレルギー・呼び方など）" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' + esc(p.other || '') + '</textarea>' +
+    '<button type="button" class="reg-customer-btn" id="custPfSave" style="width:100%;">特徴を保存</button>' +
+    '<div style="margin:12px 0 4px; font-weight:700; color:var(--brown);">反応・会話メモ</div>' +
+    '<textarea id="custNoteText" class="pin-input" rows="2" placeholder="今日の反応・会話内容など" style="width:100%; box-sizing:border-box; margin-bottom:6px;"></textarea>' +
+    '<button type="button" class="reg-customer-btn" id="custNoteAdd" style="width:100%; margin-bottom:6px;">メモを追加</button>' + notes;
+}
+
+function wireCustProfile_(phone, name, reload) {
+  const save = document.getElementById('custPfSave');
+  const add = document.getElementById('custNoteAdd');
+  if (save) save.addEventListener('click', function () {
+    showLoadingMask('保存中...');
+    gsRun().withSuccessHandler(function (res) {
+      hideLoadingMask();
+      showToast(res && res.success ? '特徴を保存しました' : 'エラー: ' + (res ? res.message : '通信失敗'));
+    }).withFailureHandler(function () { hideLoadingMask(); showToast('通信に失敗しました'); })
+      .saveCustomerProfile(phone, name, document.getElementById('custPfGender').value, document.getElementById('custPfTraits').value, document.getElementById('custPfOther').value);
+  });
+  if (add) add.addEventListener('click', function () {
+    const text = String(document.getElementById('custNoteText').value || '').trim();
+    if (!text) { showToast('メモを入力してください'); return; }
+    showLoadingMask('保存中...');
+    gsRun().withSuccessHandler(function (res) {
+      hideLoadingMask();
+      if (res && res.success) { showToast('メモを追加しました'); reload(); } else { showToast('エラー: ' + (res ? res.message : '通信失敗')); }
+    }).withFailureHandler(function () { hideLoadingMask(); showToast('通信に失敗しました'); })
+      .addVisitNote(phone, name, text);
+  });
+}
+
 function openCustHistory(phone, name, beforeDate) {
   let ov = document.getElementById('custHistModal');
   if (!ov) {
@@ -2300,6 +2344,7 @@ function openCustHistory(phone, name, beforeDate) {
     if (!r || !r.success) { body.innerHTML = '<div style="color:var(--danger);">' + esc((r && r.message) || '取得に失敗しました') + '</div>'; return; }
     const row = function (k, v) { return '<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid var(--border);"><span style="color:var(--ink-soft);">' + k + '</span><strong>' + esc(v || '—') + '</strong></div>'; };
     let h = row('初回来店日', r.firstVisit) + row('最終来店日', r.lastVisit) + row('トータル来店回数', r.visitCount ? r.visitCount + '回' : '');
+    h += custProfileHtml_(r, esc);
     if (!r.visits || !r.visits.length) {
       h += '<div style="margin-top:10px; color:var(--ink-soft);">これより前の来店記録（注文内容）はありません</div>';
     } else {
@@ -2309,6 +2354,7 @@ function openCustHistory(phone, name, beforeDate) {
       }).join('');
     }
     body.innerHTML = h;
+    wireCustProfile_(phone, name, function () { openCustHistory(phone, name, beforeDate); });
   }).withFailureHandler(function () {
     const body = document.getElementById('custHistBody');
     if (body) body.innerHTML = '<div style="color:var(--danger);">通信に失敗しました</div>';
@@ -2854,6 +2900,12 @@ function renderReservations(list) {
         <div style="font-size:11px; color:var(--ink-soft);">${r.session} / ${r.phone ? r.phone : '電話なし'}</div>
       </div>
     `;
+    if (r.phone) {
+      const hb = document.createElement('button');
+      hb.type = 'button'; hb.className = 'reg-customer-btn'; hb.style.cssText = 'font-size:11px; padding:3px 8px; margin-left:8px;'; hb.textContent = '履歴・メモ';
+      hb.onclick = function (e) { e.stopPropagation(); openCustHistory(r.phone, r.name, ''); };
+      item.appendChild(hb);
+    }
     item.onclick = () => {
       currentReservation = r;
       const resLabel = document.getElementById('currentResLabel');
