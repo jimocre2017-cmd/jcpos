@@ -2294,7 +2294,9 @@ function custProfileHtml_(r, esc) {
   return '<div style="margin:12px 0 4px; font-weight:700; color:var(--brown);">お客様の特徴</div>' +
     '<select id="custPfGender" class="pin-input" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' + gsel + '</select>' +
     '<input type="text" id="custPfTraits" class="pin-input" placeholder="特徴（例：高身長・メガネ・黒髪ロング）" value="' + esc(p.traits || '') + '" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' +
-    '<textarea id="custPfOther" class="pin-input" rows="2" placeholder="その他（好み・アレルギー・呼び方など）" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' + esc(p.other || '') + '</textarea>' +
+    '<input type="text" id="custPfNg" class="pin-input" placeholder="NG・苦手（アレルギー等）" value="' + esc(p.ng || '') + '" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' +
+    '<input type="text" id="custPfLikes" class="pin-input" placeholder="好み（例：窓際の席・辛め好き）" value="' + esc(p.likes || '') + '" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' +
+    '<textarea id="custPfOther" class="pin-input" rows="2" placeholder="その他（呼び方・家族構成など）" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' + esc(p.other || '') + '</textarea>' +
     '<button type="button" class="reg-customer-btn" id="custPfSave" style="width:100%;">特徴を保存</button>' +
     '<div style="margin:12px 0 4px; font-weight:700; color:var(--brown);">反応・会話メモ</div>' +
     '<textarea id="custNoteText" class="pin-input" rows="2" placeholder="今日の反応・会話内容など" style="width:100%; box-sizing:border-box; margin-bottom:6px;"></textarea>' +
@@ -2310,7 +2312,7 @@ function wireCustProfile_(phone, name, reload) {
       hideLoadingMask();
       showToast(res && res.success ? '特徴を保存しました' : 'エラー: ' + (res ? res.message : '通信失敗'));
     }).withFailureHandler(function () { hideLoadingMask(); showToast('通信に失敗しました'); })
-      .saveCustomerProfile(phone, name, document.getElementById('custPfGender').value, document.getElementById('custPfTraits').value, document.getElementById('custPfOther').value);
+      .saveCustomerProfile(phone, name, document.getElementById('custPfGender').value, document.getElementById('custPfTraits').value, document.getElementById('custPfOther').value, document.getElementById('custPfNg').value, document.getElementById('custPfLikes').value);
   });
   if (add) add.addEventListener('click', function () {
     const text = String(document.getElementById('custNoteText').value || '').trim();
