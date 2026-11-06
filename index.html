@@ -354,6 +354,7 @@ border-radius: 6px; padding: 6px 10px; cursor: pointer; font-weight: 700; flex-s
   <div class="top-bar">
     <div class="reservation-current" id="currentResLabel">予約: なし（ウォークイン）</div>
     <button type="button" onclick="openReservationModal()">予約選択</button>
+    <button type="button" onclick="changeTablePeopleCount()">人数変更</button>
     <button type="button" onclick="openCustomerAuthModal()">顧客管理</button>
   </div>
 
@@ -671,7 +672,12 @@ border-radius: 6px; padding: 6px 10px; cursor: pointer; font-weight: 700; flex-s
 <button type="button" class="reg-customer-btn" onclick="resetAnalyticsDateToToday()">本日</button>
 </div>
 <div id="saRangeLabel" style="font-size:11px; color:var(--ink-soft); margin-bottom:8px;"></div>
+<div id="saViewToggle" style="display:none; gap:6px; margin-bottom:8px;">
+<button type="button" id="saViewSummaryBtn" class="reg-customer-btn" onclick="setAnalyticsView('summary')" style="flex:1;">集計（売上・決済別・区分別）</button>
+<button type="button" id="saViewPartiesBtn" class="reg-customer-btn" onclick="setAnalyticsView('parties')" style="flex:1;">組別明細（卓・名前・人数・注文）</button>
+</div>
 <div id="analyticsContent">読み込み中...</div>
+<div id="saPartiesBox"></div>
     <button type="button" class="modal-close-btn" onclick="closeModal('analyticsModal')">閉じる</button>
   </div>
 </div>
@@ -785,6 +791,7 @@ let currentSubCategory = '溶岩焼き';
 let currentStaff = '髙橋';
 let staffList = ['髙橋'];
 let currentReservation = null;
+let tableReservationsAt = {}; // 卓ごとの予約情報を記憶した時刻（送信直後の再読込タイミングで消えないようにする）
 let tableReservations = {}; // 卓ごとの予約・顧客情報（送信済みの卓）
 let currentCustomer = null;
 let cachedCustomers = [];
@@ -1228,7 +1235,7 @@ function selectSuggestedCustomer(c) {
 // 卓ごとの顧客情報（予約・電話・人数）を取得：送信済みの卓の記憶 → シート保存値 → 選択中の予約 の順
 function getTableCustomerInfo(tbl, items) {
   let info = null;
-  if (tableReservations[tbl] && items && items.length > 0) info = tableReservations[tbl];
+  if (tableReservations[tbl] && ((items && items.length > 0) || (Date.now() - (tableReservationsAt[tbl] || 0) < 120000))) info = tableReservations[tbl];
   if (!info) {
     const src = (items || []).find(function (i) { return i.custName || i.custPhone || i.peopleCount; });
     if (src) {
@@ -1245,6 +1252,35 @@ function getTableCustomerInfo(tbl, items) {
   }
   if (!info && currentReservation) info = currentReservation;
   return info;
+}
+// 食事の途中で人数が変わったとき：卓の未精算注文の人数を書き換える（厨房表示・会計の初期値に反映）
+function changeTablePeopleCount() {
+  if (currentTable === 'TO') { showToast('テイクアウト卓では人数を設定できません'); return; }
+  const items = unpaidItemsMap[currentTable] || [];
+  if (items.length === 0) { showToast('先に注文を送信してください（注文のある卓のみ変更できます）'); return; }
+  const info = getTableCustomerInfo(currentTable, items) || {};
+  const input = window.prompt(formatTableName(currentTable) + ' の人数を入力してください', info.peopleCount || '');
+  if (input === null) return;
+  const n = parseInt(String(input).replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }), 10);
+  if (!(n >= 1 && n <= 99)) { showToast('人数は1〜99で入力してください'); return; }
+  const tbl = currentTable;
+  gsRun()
+    .withSuccessHandler(function (res) {
+      if (res && res.success) {
+        const cur = tableReservations[tbl] || { name: info.name || '', phone: info.phone || '', sei: info.sei || '', mei: info.mei || '' };
+        cur.peopleCount = n;
+        tableReservations[tbl] = cur;
+        tableReservationsAt[tbl] = Date.now();
+        (unpaidItemsMap[tbl] || []).forEach(function (it) { it.peopleCount = n; });
+        updateTableActionUI();
+        showToast(formatTableName(tbl) + ' の人数を ' + n + '名 に変更しました');
+        refreshAllTableUnpaid();
+      } else {
+        showToast('エラー: ' + (res ? res.message : '通信失敗'));
+      }
+    })
+    .withFailureHandler(function () { showToast('通信に失敗しました。もう一度お試しください'); })
+    .updateTablePeopleCount(tbl, n);
 }
 function updateReservationLabelForTable() {
   const resLabel = document.getElementById('currentResLabel');
@@ -1683,7 +1719,7 @@ function submitTableOrder() {
         cart = {};
         updateCartUI();
         document.getElementById('cartDetail').classList.remove('open');
-if (currentReservation) { tableReservations[currentTable] = currentReservation; currentReservation = null; }
+if (currentReservation) { tableReservations[currentTable] = currentReservation; tableReservationsAt[currentTable] = Date.now(); currentReservation = null; updateTableActionUI(); }
         refreshAllTableUnpaid();
       } else {
         showToast('エラー: ' + (res ? res.message : '通信失敗'));
@@ -2213,7 +2249,54 @@ function resetAnalyticsDateToToday() {
   if (endEl) endEl.value = today;
   onAnalyticsDateChanged();
 }
+// 当日タブ：組ごとの詳細（卓・名前・人数・注文内容）
+let analyticsView = 'summary';
+function setAnalyticsView(v) { analyticsView = v; applyAnalyticsView(currentAnalyticsPeriod); }
+// 当日タブのみ「集計 / 組別明細」を切り替えられる。他の期間は常に集計表示
+function applyAnalyticsView(period) {
+  const isToday = (period || currentAnalyticsPeriod) === 'today';
+  if (!isToday) analyticsView = 'summary';
+  const tg = document.getElementById('saViewToggle');
+  const content = document.getElementById('analyticsContent');
+  const box = document.getElementById('saPartiesBox');
+  if (tg) tg.style.display = isToday ? 'flex' : 'none';
+  if (content) content.style.display = (analyticsView === 'parties') ? 'none' : '';
+  if (box) box.style.display = (analyticsView === 'parties') ? '' : 'none';
+  const sb = document.getElementById('saViewSummaryBtn');
+  const pb = document.getElementById('saViewPartiesBtn');
+  [[sb, 'summary'], [pb, 'parties']].forEach(function (x) {
+    if (!x[0]) return;
+    const on = (analyticsView === x[1]);
+    x[0].style.background = on ? 'var(--brown)' : '';
+    x[0].style.color = on ? '#fff' : '';
+  });
+}
+function loadDayParties(period) {
+  applyAnalyticsView(period);
+  const box = document.getElementById('saPartiesBox');
+  if (!box) return;
+  if (period !== 'today') { box.innerHTML = ''; return; }
+  const base = (document.getElementById('saBaseDate') || {}).value || '';
+  box.innerHTML = '<div style="padding:10px 0; color:var(--ink-soft); font-size:12px;">組別明細を読み込み中...</div>';
+  const esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  gsRun().withSuccessHandler(function (res) {
+    if (period !== currentAnalyticsPeriod) return;
+    const list = (res && res.parties) || [];
+    if (!list.length) { box.innerHTML = '<div style="padding:10px 0; color:var(--ink-soft); font-size:12px;">この日の会計済みの組はありません</div>'; return; }
+    box.innerHTML = '<div style="font-size:13px; font-weight:700; color:var(--brown); margin:12px 0 6px;">組別明細（' + list.length + '件）</div>' + list.map(function (p) {
+      const head = esc(p.time) + ' ／ ' + (p.table ? esc(formatTableName(p.table)) : '卓なし') + ' ／ ' + (p.name ? esc(p.name) + '様' : 'ウォークイン') + (p.people ? ' ／ ' + esc(p.people) + '名' : '');
+      const items = (p.items || []).map(function (it) { return esc(it.name) + ' ×' + esc(it.qty); }).join('、') || '（明細なし）';
+      return '<div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:8px 10px; margin-bottom:6px;">' +
+        '<div style="display:flex; justify-content:space-between; font-size:12px; font-weight:700;"><span>' + head + '</span><span>¥' + Number(p.amount || 0).toLocaleString() + '（' + esc(p.pay) + '）</span></div>' +
+        '<div style="font-size:11px; color:var(--ink-soft); margin-top:3px; line-height:1.5;">' + esc(p.section) + '：' + items + '</div></div>';
+    }).join('');
+  }).withFailureHandler(function () {
+    box.innerHTML = '<div style="padding:10px 0; color:var(--danger); font-size:12px;">組別明細の読み込みに失敗しました</div>';
+  }).getDayParties(base);
+}
+
 function loadAnalyticsData(period) {
+  loadDayParties(period);
 const saBase = (document.getElementById('saBaseDate') || {}).value || '';
 const saEnd = (document.getElementById('saEndDate') || {}).value || '';
   const content = document.getElementById('analyticsContent');
