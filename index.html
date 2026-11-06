@@ -2271,6 +2271,59 @@ function applyAnalyticsView(period) {
     x[0].style.color = on ? '#fff' : '';
   });
 }
+// 組別明細の1組に、顧客リストの顧客を紐付ける（電話番号の入っていない会計のみ）
+function openCustLinkPicker(party) {
+  let ov = document.getElementById('custLinkModal');
+  if (!ov) {
+    ov = document.createElement('div');
+    ov.id = 'custLinkModal';
+    ov.className = 'modal-overlay hidden';
+    ov.style.zIndex = '10050';
+    document.body.appendChild(ov);
+  }
+  const esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  ov.innerHTML = '<div class="modal-sheet"><h3 style="margin-top:0;">顧客を紐付け</h3>' +
+    '<div style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;">' + esc(party.time) + ' ／ ' + (party.table ? esc(formatTableName(party.table)) : '卓なし') + (party.people ? ' ／ ' + esc(party.people) + '名' : '') + ' ／ ¥' + Number(party.amount || 0).toLocaleString() + '</div>' +
+    '<input type="text" id="custLinkQuery" class="pin-input" placeholder="電話番号の下4桁・カナ・氏名で検索" style="width:100%; box-sizing:border-box; margin-bottom:8px;">' +
+    '<div id="custLinkResults" style="max-height:45vh; overflow:auto;"></div>' +
+    '<button type="button" class="modal-close-btn" id="custLinkClose">閉じる</button></div>';
+  ov.classList.remove('hidden');
+  const renderResults = function () {
+    const q = normalizeCustQuery_(document.getElementById('custLinkQuery').value);
+    const box = document.getElementById('custLinkResults');
+    if (!q) { box.innerHTML = '<div style="padding:10px 0; color:var(--ink-soft); font-size:12px;">検索すると候補が出ます</div>'; return; }
+    const hits = (customerLookupList || []).filter(function (c) {
+      return normalizeCustQuery_([c.sei, c.mei, c.phone].join(' ')).includes(q);
+    }).slice(0, 20);
+    if (!hits.length) { box.innerHTML = '<div style="padding:10px 0; color:var(--ink-soft); font-size:12px;">該当する顧客がいません</div>'; return; }
+    box.innerHTML = hits.map(function (c, i) {
+      return '<div class="checkout-list-item" data-i="' + i + '" style="cursor:pointer;"><div><strong>' + esc((c.sei || '') + ' ' + (c.mei || '')) + '様</strong><div style="font-size:11px; color:var(--ink-soft);">' + esc(c.phone) + '</div></div><div style="font-size:11px; color:var(--accent); font-weight:700;">選択</div></div>';
+    }).join('');
+    box.querySelectorAll('[data-i]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        const c = hits[Number(el.getAttribute('data-i'))];
+        const nm = ((c.sei || '') + ' ' + (c.mei || '')).trim();
+        if (!window.confirm(nm + '様（' + c.phone + '）をこの会計に紐付けますか？\n顧客リストの来店回数・最終来店日も更新されます。')) return;
+        showLoadingMask('顧客を紐付け中...');
+        gsRun().withSuccessHandler(function (res) {
+          hideLoadingMask();
+          if (res && res.success) {
+            ov.classList.add('hidden');
+            showToast(nm + '様を紐付けました');
+            loadDayParties(currentAnalyticsPeriod);
+            try { preloadCustomerLookup(); } catch (e) {}
+          } else {
+            showToast('エラー: ' + (res ? res.message : '通信失敗'));
+          }
+        }).linkCheckoutCustomer(party.id, c.phone, nm);
+      });
+    });
+  };
+  document.getElementById('custLinkQuery').addEventListener('input', renderResults);
+  document.getElementById('custLinkClose').addEventListener('click', function () { ov.classList.add('hidden'); });
+  renderResults();
+}
+
 function loadDayParties(period) {
   applyAnalyticsView(period);
   const box = document.getElementById('saPartiesBox');
@@ -2288,8 +2341,15 @@ function loadDayParties(period) {
       const items = (p.items || []).map(function (it) { return esc(it.name) + ' ×' + esc(it.qty); }).join('、') || '（明細なし）';
       return '<div style="background:var(--bg); border:1px solid var(--border); border-radius:10px; padding:8px 10px; margin-bottom:6px;">' +
         '<div style="display:flex; justify-content:space-between; font-size:12px; font-weight:700;"><span>' + head + '</span><span>¥' + Number(p.amount || 0).toLocaleString() + '（' + esc(p.pay) + '）</span></div>' +
+        (p.hasPhone ? '' : '<div style="margin-top:4px;"><button type="button" class="reg-customer-btn" data-link-id="' + esc(p.id) + '" style="font-size:11px; padding:3px 10px;">顧客を紐付け</button></div>') +
         '<div style="font-size:11px; color:var(--ink-soft); margin-top:3px; line-height:1.5;">' + esc(p.section) + '：' + items + '</div></div>';
     }).join('');
+    box.querySelectorAll('button[data-link-id]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const party = list.filter(function (x) { return String(x.id) === b.getAttribute('data-link-id'); })[0];
+        if (party) openCustLinkPicker(party);
+      });
+    });
   }).withFailureHandler(function () {
     box.innerHTML = '<div style="padding:10px 0; color:var(--danger); font-size:12px;">組別明細の読み込みに失敗しました</div>';
   }).getDayParties(base);

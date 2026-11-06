@@ -449,6 +449,9 @@ var JCPOS = (function () {
       return requireFlushed('日報').then(function () { return onlineOnly('commitDailyClosing', [staff, key], '日報の確定'); });
     },
     // 食事の途中の人数変更：未送信の注文があるとサーバー側に無いので、送信が終わってから行う
+    linkCheckoutCustomer: function (checkoutId, phone, name) {
+      return requireFlushed('顧客紐付け').then(function () { return onlineOnly('linkCheckoutCustomer', [checkoutId, phone, name], '顧客の紐付け'); });
+    },
     updateTablePeopleCount: function (tableId, count) {
       return requireFlushed('人数変更').then(function () { return onlineOnly('updateTablePeopleCount', [tableId, count], '人数の変更'); });
     }
@@ -457,7 +460,7 @@ var JCPOS = (function () {
   var LABELS = {
     getMealTickets: 'チケットの検索', issueMealTicketAndCheckout: 'チケットの発行', consumeMealTicket: 'チケットの消化',
     verifyAdminPin: '顧客管理', getCustomerList: '顧客管理', registerNewCustomer: '顧客の新規登録',
-    getSalesAnalytics: '売上分析', getDayParties: '組別明細', updateTablePeopleCount: '人数の変更', getCheckoutsByDate: '会計の取消・修正', cancelCheckout: '会計の取消',
+    getSalesAnalytics: '売上分析', getDayParties: '組別明細', linkCheckoutCustomer: '顧客の紐付け', updateTablePeopleCount: '人数の変更', getCheckoutsByDate: '会計の取消・修正', cancelCheckout: '会計の取消',
     updateCheckoutFields: '会計の修正', getCheckoutDetails: '会計の修正', updateCheckoutDetailItem: '会計の修正',
     toggleSeasonItemAvailability: '季節メニューの切替', processBackfillCheckout: '後入れ会計', setOrderItemsServed: '提供済の記録', markTableOrdersCompleted: '提供済の記録'
   };
