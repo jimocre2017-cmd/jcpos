@@ -1910,6 +1910,8 @@ function openTableSplitCheckoutModal() {
   document.getElementById('tcCustMei').value = '';
   document.getElementById('tcCustPhone').value = '';
   document.getElementById('customerSuggestBox').style.display = 'none';
+  checkoutResCache = [];
+  if (!isTO) { try { gsRun().withSuccessHandler(function (l) { checkoutResCache = Array.isArray(l) ? l : []; }).withFailureHandler(function () {}).getTodayReservations(); } catch (e) {} }
 
   gsRun().withSuccessHandler(res => {
     splitUnpaidItems = (res && res.items) ? res.items : (Array.isArray(res) ? res : []);
@@ -2100,11 +2102,47 @@ function resetPayOptionsUI() {
   });
 }
 
+let peopleCountChecked = false;
+let checkoutResCache = [];
+function digitsOnly_(v) { return String(v || '').replace(/[０-９]/g, function (c) { return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }).replace(/[^0-9]/g, ''); }
+// 入力された電話・氏名に対応する本日の予約を探す（選んだ予約があればそれを優先）
+function findReservationForCheckout_(sei, mei, phone) {
+  if (checkoutPickedReservation) return checkoutPickedReservation;
+  const pd = digitsOnly_(phone);
+  const nm = (String(sei || '') + String(mei || '')).replace(/\s/g, '');
+  const list = checkoutResCache || [];
+  for (let i = 0; i < list.length; i++) {
+    const r = list[i];
+    if (pd.length >= 10 && digitsOnly_(r.phone) === pd) return r;
+  }
+  if (nm) {
+    for (let j = 0; j < list.length; j++) {
+      const rn = String(list[j].name || '').replace(/\s/g, '');
+      if (rn && rn === nm) return list[j];
+    }
+  }
+  return null;
+}
+
 function onProceedToCheckout() {
   const peopleCount = document.getElementById('tcPeopleCount').value.trim();
   const sei = document.getElementById('tcCustSei').value.trim();
   const mei = document.getElementById('tcCustMei').value.trim();
   const phone = document.getElementById('tcCustPhone').value.trim();
+  // 予約の人数と入力の人数が違うときは確認（入力ミス・予約の選び忘れ防止）
+  if (currentTable !== 'TO' && !peopleCountChecked) {
+    const rr = findReservationForCheckout_(sei, mei, phone);
+    const rp = rr ? Number(rr.peopleCount) : 0;
+    const ip = Number(peopleCount);
+    if (rr && rp > 0 && peopleCount !== '0' && ip !== rp) {
+      const shown = peopleCount === '' ? '未入力' : (ip + '名');
+      const ok = confirm('【人数の確認】\n' + (rr.name || '') + '様の予約は ' + rp + '名 ですが、入力は ' + shown + ' です。\n\nOK　　　　＝ 予約どおり ' + rp + '名 にして進む\nキャンセル ＝ 入力のまま進む（当日の人数が違うとき）');
+      if (ok) document.getElementById('tcPeopleCount').value = String(rp);
+      peopleCountChecked = true;
+      return onProceedToCheckout();
+    }
+  }
+  peopleCountChecked = false;
   if (phone) {
     const digits = phone.replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[^0-9]/g, '');
     if (digits.length < 10 || digits.length > 11) {
@@ -3261,13 +3299,33 @@ function applyReservationToCheckout(r) {
   if (resLabel) resLabel.innerText = '予約: ' + r.name + '様 (' + (r.peopleCount || 1) + '名)';
   showToast('「' + r.name + '様」' + (r.peopleCount || 1) + '名 を反映しました');
 }
+let resLostOpen = [];
+let lastResList = null;
+function lostItemsForReservation_(r) {
+  const pd = digitsOnly_(r.phone);
+  const nm = String(r.name || '').replace(/\s/g, '');
+  return (resLostOpen || []).filter(function (it) {
+    const ip = digitsOnly_(it.ownerPhone);
+    if (pd.length >= 10 && ip === pd) return true;
+    const iname = String(it.ownerName || '').replace(/\s/g, '');
+    return !!(nm && iname && iname === nm);
+  });
+}
 function openReservationModal() {
   reservationPickMode = 'order';
+  resLostOpen = [];
+  try {
+    google.script.run.withSuccessHandler(function (res) {
+      resLostOpen = (res && res.success) ? (res.items || []) : [];
+      if (lastResList && resLostOpen.length) renderReservations(lastResList);
+    }).withFailureHandler(function () {}).getLostItems(false);
+  } catch (e) {}
   gsRun().withSuccessHandler(renderReservations).getTodayReservations();
   document.getElementById('reservationModal').classList.remove('hidden');
 }
 
 function renderReservations(list) {
+  lastResList = list;
   const container = document.getElementById('resList');
   container.innerHTML = '';
   if (!list || list.length === 0) {
@@ -3285,6 +3343,14 @@ function renderReservations(list) {
         <div style="font-size:11px; color:var(--ink-soft);">${r.session} / ${r.phone ? r.phone : '電話なし'}</div>
       </div>
     `;
+    const lostHere = lostItemsForReservation_(r);
+    if (lostHere.length) {
+      const lb = document.createElement('div');
+      lb.style.cssText = 'margin-top:4px; font-size:12px; font-weight:800; color:#b45309; background:#fef3c7; border:1px solid #f59e0b; border-radius:8px; padding:3px 8px; display:inline-block;';
+      lb.textContent = '🧳 忘れ物あり：' + lostHere.map(function (it) { return it.name; }).join('、') + '（タップで詳細）';
+      lb.onclick = function (e) { e.stopPropagation(); closeModal('reservationModal'); lostItems = resLostOpen; openLostDetail(lostHere[0].id); };
+      item.firstElementChild.appendChild(lb);
+    }
     if (r.phone) {
       const hb = document.createElement('button');
       hb.type = 'button'; hb.className = 'reg-customer-btn'; hb.style.cssText = 'font-size:11px; padding:3px 8px; margin-left:8px;'; hb.textContent = '履歴・メモ';
