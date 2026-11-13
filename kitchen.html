@@ -14,6 +14,7 @@
 <title>Jimo Cafe 厨房</title>
 <!-- アプリ版：google.script.run の代わり（オフライン保存・自動送信） -->
 <script src="api.js"></script>
+<script src="sfx.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&family=Playfair+Display:ital,wght@0,600;1,600&display=swap" rel="stylesheet">
@@ -91,7 +92,22 @@ header .brand .sub { font-size: 11px; color: var(--accent); letter-spacing: 0.08
   display: flex; justify-content: space-between; align-items: center;
   background: var(--card-bg); padding: 8px 10px; border-radius: 8px; font-size: 14px;
 }
-.ticket-item-row.completed { opacity: 0.4; text-decoration: line-through; }
+.ticket-item-row.completed { opacity: 0.55; }
+.ticket-item-row.completed .ticket-item-info,
+.ticket-item-row.completed .ticket-item-qty { text-decoration: line-through; text-decoration-thickness: 2px; text-decoration-color: var(--ink-soft); color: var(--ink-soft); }
+.ticket-item-row.completed .ticket-item-info::before { content: '✓ '; color: var(--success); text-decoration: none; display: inline-block; }
+.serve-btn.done { opacity: 1; }
+.ticket-item-row.completed .serve-btn { text-decoration: none; }
+/* 提供済み確認画面 */
+.modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.65); z-index: 200; display: none; align-items: flex-start; justify-content: center; padding: 16px; overflow-y: auto; }
+.modal-back.show { display: flex; }
+.modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); width: 100%; max-width: 560px; padding: 16px; box-shadow: var(--shadow); }
+.modal-box h2 { margin: 0 0 4px; font-size: 17px; }
+.modal-note { font-size: 12px; color: var(--ink-soft); margin-bottom: 12px; line-height: 1.6; }
+.chk-table { margin-bottom: 14px; }
+.chk-table-name { font-size: 15px; font-weight: 900; color: var(--accent); margin-bottom: 6px; }
+.chk-summary { font-size: 12px; color: var(--ink-soft); margin: 0 0 6px; }
+.modal-close { width: 100%; margin-top: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); color: var(--ink); font-size: 14px; font-weight: 700; cursor: pointer; }
 .ticket-item-info { flex: 1; font-weight: 700; }
 .serve-btn { margin-left: 10px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--success); background: transparent; color: var(--success); font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .serve-btn.done { border-color: var(--border); color: var(--ink-soft); }
@@ -124,6 +140,8 @@ header .brand .sub { font-size: 11px; color: var(--accent); letter-spacing: 0.08
   </div>
   <div class="controls">
     <button type="button" class="btn active" onclick="loadKitchenOrders()">🔄 更新</button>
+    <button type="button" class="btn" onclick="openServedCheck()">📋 提供済み確認</button>
+    <button type="button" class="btn" data-sfx-toggle onclick="JCSfx.toggle()">🔔 音ON</button>
     <label style="font-size: 12px; color: var(--ink-soft); display:flex; align-items:center; gap:4px;">
       <input type="checkbox" id="autoRefreshCheck" checked onchange="toggleAutoRefresh()"> 自動更新(5秒)
     </label>
@@ -138,6 +156,14 @@ header .brand .sub { font-size: 11px; color: var(--accent); letter-spacing: 0.08
   </div>
 </main>
 
+<div class="modal-back" id="servedModal" onclick="if(event.target===this)closeServedCheck()">
+  <div class="modal-box">
+    <h2>📋 提供済み確認・修正</h2>
+    <div class="modal-note">会計前の卓について、何を出したか（横線＝提供済み）を確認できます。間違えて押した品は「取消」で未提供に戻せます。</div>
+    <div id="servedBody">読み込み中...</div>
+    <button type="button" class="modal-close" onclick="closeServedCheck()">閉じる</button>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -232,6 +258,7 @@ function loadKitchenOrders(isSilent) {
   google.script.run.withSuccessHandler(ordersMap => {
     kitchenLoading = false;
     if (mySeq !== kitchenSeq) return;
+    detectNewOrders(ordersMap);
     renderKitchenBoard(ordersMap);
     if (!isSilent) showToast('注文データを更新しました');
   }).withFailureHandler(err => {
@@ -240,7 +267,40 @@ function loadKitchenOrders(isSilent) {
   }).getKitchenActiveOrders();
 }
 
+let lastOrdersMap = {};
+// ---- 通知音：新しい注文が入ったら鳴らす／会計されたらチャリンと鳴らす ----
+let seenOrderIds = null;      // 初回読み込みでは鳴らさない
+function detectNewOrders(ordersMap) {
+  const cur = {};
+  Object.keys(ordersMap || {}).forEach(function (t) {
+    (ordersMap[t] || []).forEach(function (i) { if (!i.served) cur[String(i.orderId)] = t; });
+  });
+  if (seenOrderIds !== null) {
+    let isNew = false;
+    Object.keys(cur).forEach(function (id) { if (!seenOrderIds[id]) isNew = true; });
+    if (isNew) { JCSfx.play('order'); showToast('🔔 新しい注文が入りました'); }
+  }
+  seenOrderIds = cur;
+}
+let prevUnpaid = null;
+function pollPayments() {
+  google.script.run.withSuccessHandler(function (sum) {
+    const cur = {};
+    Object.keys(sum || {}).forEach(function (t) { (sum[t] || []).forEach(function (i) { cur[String(i.orderId)] = t; }); });
+    if (prevUnpaid !== null) {
+      let gone = false;
+      Object.keys(prevUnpaid).forEach(function (id) { if (!cur[id]) gone = true; });
+      if (gone) JCSfx.play('pay');
+    }
+    prevUnpaid = cur;
+  }).withFailureHandler(function () {}).getAllTablesUnpaidSummary();
+}
+setInterval(function () { if (document.visibilityState === 'visible') pollPayments(); }, 5000);
+window.addEventListener('DOMContentLoaded', pollPayments);
+function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
 function renderKitchenBoard(ordersMap) {
+  lastOrdersMap = ordersMap || {};
   const grid = document.getElementById('kitchenGrid');
   grid.innerHTML = '';
 
@@ -297,17 +357,79 @@ function renderKitchenBoard(ordersMap) {
 }
 
 // 品目ごとの提供完了チェック（デザート・ドリンクなど後から出すものを個別に管理）
-function setItemServed(orderId, served) {
+function servedSummaryText(items) {
+  const done = (items || []).filter(function (i) { return i.served || i.status === '未精算'; });
+  if (!done.length) return '（まだ提供済みの品はありません）';
+  return done.map(function (i) { return '・' + i.name + ' ×' + i.qty; }).join('\n');
+}
+function setItemServed(orderId, served, tableId, itemsOverride) {
+  // 取消（未提供に戻す）時は、その卓で何を出したかを見せて確認してから戻す
+  if (served === false) {
+    let list = itemsOverride;
+    let target = null;
+    if (!list) {
+      Object.keys(lastOrdersMap).forEach(function (t) {
+        (lastOrdersMap[t] || []).forEach(function (i) { if (String(i.orderId) === String(orderId)) { list = lastOrdersMap[t]; tableId = t; } });
+      });
+    }
+    (list || []).forEach(function (i) { if (String(i.orderId) === String(orderId)) target = i; });
+    const msg = (target ? '「' + target.name + ' ×' + target.qty + '」を未提供に戻しますか？\n\n' : '未提供に戻しますか？\n\n')
+      + (tableId ? formatTableName(tableId) + ' の提供済み一覧：\n' : '提供済み一覧：\n') + servedSummaryText(list);
+    if (!confirm(msg)) return;
+  }
   kitchenSeq++; kitchenLoading = false;
   google.script.run.withSuccessHandler(res => {
     if (res && res.success) {
+      JCSfx.play(served ? 'served' : 'undo');
       loadKitchenOrders(true);
+      if (document.getElementById('servedModal').classList.contains('show')) loadServedCheck();
     } else {
       showToast('エラー: ' + (res ? res.message : '通信失敗'));
     }
   }).withFailureHandler(err => {
     showToast('通信エラー: ' + err.message);
   }).setOrderItemsServed([orderId], served);
+}
+
+// 提供済み確認画面：会計前の全卓について、出した品（横線）と未提供の品を一覧し、間違いをその場で直せる
+let servedCheckData = {};
+function openServedCheck() {
+  document.getElementById('servedModal').classList.add('show');
+  loadServedCheck();
+}
+function closeServedCheck() {
+  document.getElementById('servedModal').classList.remove('show');
+}
+function loadServedCheck() {
+  const body = document.getElementById('servedBody');
+  google.script.run.withSuccessHandler(function (sum) {
+    servedCheckData = {};
+    let html = '';
+    Object.keys(sum || {}).forEach(function (t) {
+      const items = (sum[t] || []).map(function (i) {
+        return { orderId: i.orderId, name: i.name, qty: i.qty, served: i.status === '未精算', status: i.status };
+      });
+      if (!items.length) return;
+      servedCheckData[t] = items;
+      const doneN = items.filter(function (i) { return i.served; }).length;
+      html += '<div class="chk-table"><div class="chk-table-name">' + esc(formatTableName(t)) + '</div>'
+        + '<div class="chk-summary">提供済み ' + doneN + '品 / 未提供 ' + (items.length - doneN) + '品</div><ul class="ticket-items">';
+      items.forEach(function (i) {
+        html += '<li class="ticket-item-row' + (i.served ? ' completed' : '') + '">'
+          + '<div class="ticket-item-info">' + esc(i.name) + '</div>'
+          + '<div class="ticket-item-qty">×' + esc(i.qty) + '</div>'
+          + '<button type="button" class="serve-btn' + (i.served ? ' done' : '') + '" onclick="checkItemToggle(\'' + esc(t) + '\',\'' + esc(i.orderId) + '\',' + (i.served ? 'false' : 'true') + ')">' + (i.served ? '取消' : '✓ 提供済') + '</button>'
+          + '</li>';
+      });
+      html += '</ul></div>';
+    });
+    body.innerHTML = html || '<div style="padding:20px;text-align:center;color:var(--ink-soft);">会計前の注文はありません</div>';
+  }).withFailureHandler(function (err) {
+    body.innerHTML = '<div style="padding:20px;color:var(--danger);">通信エラー: ' + esc(err.message) + '</div>';
+  }).getAllTablesUnpaidSummary();
+}
+function checkItemToggle(tableId, orderId, served) {
+  setItemServed(orderId, served, tableId, servedCheckData[tableId]);
 }
 function completeTableOrders(tableId) {
   if (!confirm(`${formatTableName(tableId)} の残りの注文をすべて提供済にしますか？`)) return;
