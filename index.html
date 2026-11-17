@@ -371,6 +371,15 @@ border-radius: 6px; padding: 6px 10px; cursor: pointer; font-weight: 700; flex-s
   padding: 10px 4px; border: 1px solid var(--border); background: var(--bg);
   border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
 }
+/* 2026-11-14 モーダル: キーボード・候補リストで入力欄や金額が隠れないようにする */
+.modal-overlay { inset: auto; top: var(--vvt, 0px); left: 0; right: 0; height: var(--vvh, 100dvh); }
+.modal-sheet { max-height: calc(var(--vvh, 100dvh) - 16px); padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.edit-suggest { border: 1px solid var(--border); border-radius: 10px; background: #fff; max-height: 168px; overflow-y: auto; margin: 2px 0 6px; }
+.edit-suggest:empty { display: none; }
+.edit-suggest .es-item { display: flex; justify-content: space-between; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--border); font-size: 13px; cursor: pointer; }
+.edit-suggest .es-item:last-child { border-bottom: none; }
+.edit-suggest .es-item:active { background: var(--accent-soft); }
+.edit-suggest .es-item strong { color: var(--accent); white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -696,13 +705,13 @@ border-radius: 6px; padding: 6px 10px; cursor: pointer; font-weight: 700; flex-s
 <div class="modal-sheet">
 <h3 style="margin-top:0;">注文内容を修正</h3>
 <div id="editOrderCurrent" style="font-size:12px; color:var(--ink-soft); margin-bottom:8px;"></div>
-<div style="font-size:12px; font-weight:700; color:var(--ink-soft);">商品名（一覧から選ぶか、入力して検索）</div>
-<input type="text" id="editOrderName" class="pin-input" list="menuNameList" placeholder="例: 手ごね肉肉ハンバーグ 170g（セット）" oninput="onEditOrderNameChanged()">
-<datalist id="menuNameList"></datalist>
 <div style="display:flex; gap:8px;">
 <div style="flex:1;"><div style="font-size:12px; font-weight:700; color:var(--ink-soft);">数量</div><input type="number" id="editOrderQty" class="pin-input" min="1" inputmode="numeric"></div>
 <div style="flex:1;"><div style="font-size:12px; font-weight:700; color:var(--ink-soft);">単価（円）</div><input type="number" id="editOrderPrice" class="pin-input" inputmode="numeric"></div>
 </div>
+<div style="font-size:12px; font-weight:700; color:var(--ink-soft); margin-top:6px;">商品名（入力すると候補が出ます）</div>
+<input type="text" id="editOrderName" class="pin-input" autocomplete="off" placeholder="例: 手ごね肉肉ハンバーグ 170g（セット）" oninput="onEditOrderNameChanged()">
+<div id="editOrderSuggest" class="edit-suggest"></div>
 <button type="button" class="checkout-btn" style="margin-top:12px;" onclick="executeEditOrder()">この内容に修正する</button>
 <button type="button" class="modal-close-btn" onclick="closeModal('editOrderModal')">キャンセル</button>
 </div>
@@ -2151,6 +2160,14 @@ function onProceedToCheckout() {
     }
   }
 
+  // 氏名だけ入力して電話番号が空だと顧客リストに登録されないため、会計前に確認する
+  if (!phone && (sei || mei)) {
+    const _ri = (typeof getTableCustomerInfo === 'function' ? getTableCustomerInfo(currentTable, splitUnpaidItems) : null) || checkoutPickedReservation || {};
+    if (!String(_ri.phone || '').trim()) {
+      if (!window.confirm('電話番号が空欄です。このままだと顧客リストに登録されません。\nこのまま会計しますか？（キャンセルで電話番号を入力）')) return;
+    }
+  }
+
   const orderItems = Array.from(selectedOrderIds).map(id => {
     const item = splitUnpaidItems.find(i => String(i.orderId) === id);
     const fullQty = item ? (Number(item.qty) || 1) : 1;
@@ -2689,10 +2706,11 @@ function openCustHistoryForTable() {
 }
 
 // お客様の特徴（性別・見た目・その他）と、反応・会話メモの入力欄
+// ===== お客様詳細：特徴・反応/会話メモ（編集・削除可）・コース料理の記録（編集・削除可）・予約フォームの記録 =====
+// 2026-11-17 アプリ版とブラウザ版で同じコードを使う（一元一貫）
 function custProfileHtml_(r, esc) {
   const p = r.profile || {};
   const gsel = ['', '女性', '男性', 'その他'].map(function (g) { return '<option value="' + g + '"' + (p.gender === g ? ' selected' : '') + '>' + (g || '性別：未設定') + '</option>'; }).join('');
-  const notes = (r.notes || []).map(function (n) { return '<div style="padding:4px 0; border-bottom:1px solid var(--border); font-size:12px;"><span style="color:var(--ink-soft);">' + esc(n.date) + '</span>　' + esc(n.note) + '</div>'; }).join('') || '<div style="font-size:12px; color:var(--ink-soft);">まだメモはありません</div>';
   return '<div style="margin:12px 0 4px; font-weight:700; color:var(--brown);">お客様の特徴</div>' +
     '<select id="custPfGender" class="pin-input" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' + gsel + '</select>' +
     '<input type="text" id="custPfTraits" class="pin-input" placeholder="特徴（例：高身長・メガネ・黒髪ロング）" value="' + esc(p.traits || '') + '" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' +
@@ -2701,8 +2719,64 @@ function custProfileHtml_(r, esc) {
     '<textarea id="custPfOther" class="pin-input" rows="2" placeholder="その他（呼び方・家族構成など）" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' + esc(p.other || '') + '</textarea>' +
     '<button type="button" class="reg-customer-btn" id="custPfSave" style="width:100%;">特徴を保存</button>' +
     '<div style="margin:12px 0 4px; font-weight:700; color:var(--brown);">反応・会話メモ</div>' +
-    '<textarea id="custNoteText" class="pin-input" rows="2" placeholder="今日の反応・会話内容など" style="width:100%; box-sizing:border-box; margin-bottom:6px;"></textarea>' +
-    '<button type="button" class="reg-customer-btn" id="custNoteAdd" style="width:100%; margin-bottom:6px;">メモを追加</button>' + notes;
+    '<textarea id="custNoteText" class="pin-input" rows="2" placeholder="今日の反応・会話内容など（コースの料理は下の「コース料理の記録」へ）" style="width:100%; box-sizing:border-box; margin-bottom:6px;"></textarea>' +
+    '<button type="button" class="reg-customer-btn" id="custNoteAdd" style="width:100%; margin-bottom:6px;">メモを追加</button>' +
+    custNotesHtml_(r, esc) + courseHtml_(r, esc) + reservationHtml_(r, esc);
+}
+
+// 反応・会話メモの一覧（1件ずつ「編集」できる。編集欄を空にして保存、または「削除」で消せる）
+function custNotesHtml_(r, esc) {
+  const list = r.notes || [];
+  window.__custNotes = list;
+  if (!list.length) return '<div style="font-size:12px; color:var(--ink-soft);">まだメモはありません</div>';
+  return '<div id="custNoteList">' + list.map(function (n, i) {
+    return '<div class="cnote-item" data-i="' + i + '" style="padding:4px 0; border-bottom:1px solid var(--border); font-size:12px;">' +
+      '<div style="display:flex; gap:6px; align-items:flex-start;">' +
+      '<div style="flex:1; min-width:0; white-space:pre-wrap; word-break:break-all;"><span style="color:var(--ink-soft);">' + esc(n.date) + '</span>　' + esc(n.note) + '</div>' +
+      (n.row ? '<button type="button" class="cnote-edit" style="flex-shrink:0; border:1px solid var(--border); background:#fff; border-radius:6px; font-size:11px; padding:2px 8px;">編集</button>' : '') +
+      '</div></div>';
+  }).join('') + '</div>';
+}
+
+function wireCustNotes_(phone, reload) {
+  const box = document.getElementById('custNoteList');
+  if (!box) return;
+  const esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  const send = function (n, text, okMsg) {
+    showLoadingMask('保存中...');
+    gsRun().withSuccessHandler(function (res) {
+      hideLoadingMask();
+      if (res && res.success) { showToast(okMsg); reload(); } else { showToast('エラー: ' + (res ? res.message : '通信失敗')); }
+    }).withFailureHandler(function () { hideLoadingMask(); showToast('通信に失敗しました'); })
+      .updateVisitNote(n.row, phone, n.note, text);
+  };
+  box.addEventListener('click', function (e) {
+    const item = e.target.closest('.cnote-item');
+    if (!item) return;
+    const n = (window.__custNotes || [])[Number(item.getAttribute('data-i'))];
+    if (!n) return;
+    if (e.target.classList.contains('cnote-edit')) {
+      item.innerHTML = '<div style="font-size:11px; color:var(--ink-soft); margin-bottom:4px;">' + esc(n.at || n.date) + ' のメモを編集</div>' +
+        '<textarea class="pin-input cnote-input" rows="4" style="width:100%; box-sizing:border-box; margin-bottom:6px;">' + esc(n.note) + '</textarea>' +
+        '<div style="display:flex; gap:6px;">' +
+        '<button type="button" class="reg-customer-btn cnote-save" style="flex:2;">保存</button>' +
+        '<button type="button" class="reg-customer-btn cnote-del" style="flex:1; background:#fff; color:#b00020; border:1px solid #b00020;">削除</button>' +
+        '<button type="button" class="reg-customer-btn cnote-cancel" style="flex:1; background:#fff; color:var(--ink-soft); border:1px solid var(--border);">やめる</button></div>';
+      const ta = item.querySelector('.cnote-input'); if (ta) ta.focus();
+      return;
+    }
+    if (e.target.classList.contains('cnote-cancel')) { reload(); return; }
+    if (e.target.classList.contains('cnote-save')) {
+      const text = String(item.querySelector('.cnote-input').value || '').trim();
+      if (!text) { if (window.confirm('メモが空です。このメモを削除しますか？')) send(n, '', 'メモを削除しました'); return; }
+      if (text === String(n.note || '').trim()) { reload(); return; }
+      send(n, text, 'メモを修正しました');
+      return;
+    }
+    if (e.target.classList.contains('cnote-del')) {
+      if (window.confirm('このメモを削除しますか？（修正ログに内容は残ります）')) send(n, '', 'メモを削除しました');
+    }
+  });
 }
 
 function wireCustProfile_(phone, name, reload) {
@@ -2726,7 +2800,113 @@ function wireCustProfile_(phone, name, reload) {
     }).withFailureHandler(function () { hideLoadingMask(); showToast('通信に失敗しました'); })
       .addVisitNote(phone, name, text);
   });
+  wireCustNotes_(phone, reload);
+  wireCourse_(phone, name, reload);
 }
+
+function reservationHtml_(r, esc) {
+  const list = r.reservations || [];
+  if (!list.length) return '';
+  const line = function (k, v, cls) { return v ? '<div style="font-size:12px; line-height:1.5;' + (cls || '') + '"><b>' + esc(k) + '：</b>' + esc(v) + '</div>' : ''; };
+  return '<div style="margin:14px 0 4px; font-weight:700; color:var(--brown);">予約フォームの記録</div>' + list.map(function (x) {
+    return '<div style="padding:6px 0; border-bottom:1px solid var(--border);"><div style="font-size:12px; color:var(--ink-soft);">' + esc(x.date) + ' ' + esc(x.time) + '　' + esc(x.type) + (x.people ? '　' + esc(x.people) + '名' : '') + (/キャンセル/.test(x.status) ? '　【キャンセル】' : '') + '</div>' +
+      line('アレルギー', x.allergy, ' color:#b00020; font-weight:700;') + line('お祝い', x.celebrate) + line('メッセージ', x.plate) + line('ケーキ', x.cake) + line('コース', x.course) + line('お料理の希望', x.pref) + line('ご要望', x.request) + line('きっかけ', x.source) + '</div>';
+  }).join('');
+}
+
+function courseRowHtml_(no, d, esc) {
+  d = d || {};
+  return '<div class="course-row" style="display:flex; gap:4px; align-items:center; margin-bottom:4px;"><span class="cno" style="width:20px; text-align:right; color:var(--ink-soft); font-size:12px;">' + no + '</span>' +
+    '<input type="text" class="pin-input cdish" placeholder="料理名" value="' + esc(d.name || '') + '" style="flex:2; min-width:0; box-sizing:border-box;">' +
+    '<input type="text" class="pin-input cnote" placeholder="反応（任意）" value="' + esc(d.note || '') + '" style="flex:1; min-width:0; box-sizing:border-box;">' +
+    '<button type="button" class="cdel" style="border:none; background:none; font-size:18px; color:var(--ink-soft);">×</button></div>' +
+    '<div class="cwarn" style="display:none; margin:-2px 0 4px 24px; font-size:11px; color:#b04a00;"></div>';
+}
+
+// コース料理の記録：過去のコースは「編集」で入力欄に読み込み、同じ日付で保存すると上書き、「削除」でその日の記録を消す
+function courseHtml_(r, esc) {
+  const courses = r.courses || [];
+  window.__custCourses = courses;
+  const today = new Date().toLocaleDateString('sv-SE');
+  const btn = 'border:1px solid var(--border); background:#fff; border-radius:6px; font-size:11px; padding:2px 8px;';
+  const past = courses.map(function (c, i) {
+    return '<div style="padding:5px 0; border-bottom:1px solid var(--border); font-size:12px;"><div style="display:flex; gap:6px; align-items:flex-start;">' +
+      '<div style="flex:1; min-width:0;"><span style="color:var(--ink-soft);">' + esc(c.date) + '</span>　' +
+      c.dishes.map(function (d) { return esc(d.no + '.' + d.name) + (d.note ? '（' + esc(d.note) + '）' : ''); }).join('　') + '</div>' +
+      '<button type="button" class="courseCopy" data-i="' + i + '" style="flex-shrink:0; ' + btn + '">編集</button>' +
+      '<button type="button" class="courseDel" data-i="' + i + '" style="flex-shrink:0; ' + btn + ' color:#b00020;">削除</button></div></div>';
+  }).join('');
+  return '<div style="margin:14px 0 4px; font-weight:700; color:var(--brown);">コース料理の記録（10皿まで）</div>' +
+    '<div style="font-size:11px; color:var(--ink-soft); margin-bottom:4px;">同じ日付で保存すると、その日の記録を上書きします</div>' +
+    '<input type="date" id="courseDate" class="pin-input" value="' + today + '" style="margin-bottom:6px;">' +
+    '<div id="courseRows">' + courseRowHtml_(1, null, esc) + '</div>' +
+    '<div style="display:flex; gap:6px; margin:6px 0;"><button type="button" class="reg-customer-btn" id="courseAdd" style="flex:1;">＋皿を追加</button>' +
+    '<button type="button" class="reg-customer-btn" id="courseSave" style="flex:1;">コースを保存</button></div>' +
+    (past ? '<div style="font-size:12px; color:var(--ink-soft); margin-top:6px;">これまでのコース（新しい順）</div>' + past : '');
+}
+
+function wireCourse_(phone, name, reload) {
+  const rows = document.getElementById('courseRows');
+  if (!rows) return;
+  const esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  const renum = function () { Array.prototype.forEach.call(rows.querySelectorAll('.cno'), function (el, i) { el.textContent = i + 1; }); };
+  const warn = function (rowEl) {
+    const v = rowEl.querySelector('.cdish').value.trim(); const w = rowEl.nextElementSibling;
+    const day = document.getElementById('courseDate').value;
+    let hit = '';
+    if (v) (window.__custCourses || []).some(function (c) { return c.date !== day && c.dishes.some(function (d) { if (d.name === v) { hit = c.date; return true; } return false; }); });
+    if (w && w.className === 'cwarn') { w.style.display = hit ? 'block' : 'none'; w.textContent = hit ? '⚠ ' + hit + ' にも出しています' : ''; }
+  };
+  const setRows = function (dishes) {
+    rows.innerHTML = '';
+    (dishes && dishes.length ? dishes : [null]).forEach(function (d, i) { rows.insertAdjacentHTML('beforeend', courseRowHtml_(i + 1, d, esc)); });
+    Array.prototype.forEach.call(rows.querySelectorAll('.course-row'), warn);
+  };
+  const saveCourse = function (day, dishes, okMsg) {
+    showLoadingMask('保存中...');
+    gsRun().withSuccessHandler(function (res) {
+      hideLoadingMask();
+      if (res && res.success) { showToast(okMsg || ('コースを保存しました（' + res.count + '皿）')); reload(); } else { showToast('エラー: ' + (res ? res.message : '通信失敗')); }
+    }).withFailureHandler(function () { hideLoadingMask(); showToast('通信に失敗しました'); })
+      .saveCourseRecord(phone, name, day, dishes);
+  };
+  rows.addEventListener('input', function (e) { const row = e.target.closest('.course-row'); if (row && e.target.classList.contains('cdish')) warn(row); });
+  rows.addEventListener('click', function (e) {
+    if (!e.target.classList.contains('cdel')) return;
+    const row = e.target.closest('.course-row'); const w = row.nextElementSibling;
+    if (w && w.className === 'cwarn') w.remove(); row.remove();
+    if (!rows.querySelector('.course-row')) setRows(null); else renum();
+  });
+  document.getElementById('courseAdd').addEventListener('click', function () {
+    const n = rows.querySelectorAll('.course-row').length;
+    if (n >= 10) { showToast('コースは10皿までです'); return; }
+    rows.insertAdjacentHTML('beforeend', courseRowHtml_(n + 1, null, esc));
+    const ins = rows.querySelectorAll('.cdish'); ins[ins.length - 1].focus();
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.courseCopy'), function (b) {
+    b.addEventListener('click', function () {
+      const c = (window.__custCourses || [])[Number(b.getAttribute('data-i'))]; if (!c) return;
+      document.getElementById('courseDate').value = c.date; setRows(c.dishes);
+      showToast(c.date + ' のコースを読み込みました。直して「コースを保存」で上書きします');
+      rows.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll('.courseDel'), function (b) {
+    b.addEventListener('click', function () {
+      const c = (window.__custCourses || [])[Number(b.getAttribute('data-i'))]; if (!c) return;
+      if (!window.confirm(c.date + ' のコース記録を削除しますか？')) return;
+      saveCourse(c.date, [], c.date + ' のコース記録を削除しました');
+    });
+  });
+  document.getElementById('courseSave').addEventListener('click', function () {
+    const dishes = Array.prototype.map.call(rows.querySelectorAll('.course-row'), function (row) { return { name: row.querySelector('.cdish').value, note: row.querySelector('.cnote').value }; }).filter(function (d) { return String(d.name).trim(); });
+    if (!dishes.length) { showToast('料理名を入力してください'); return; }
+    const day = document.getElementById('courseDate').value;
+    if ((window.__custCourses || []).some(function (c) { return c.date === day; }) && !window.confirm(day + ' のコース記録を上書きします。よろしいですか？')) return;
+    saveCourse(day, dishes);
+  });
+}
+// ===== お客様詳細ここまで =====
 
 function openCustHistory(phone, name, beforeDate) {
   let ov = document.getElementById('custHistModal');
@@ -3114,12 +3294,31 @@ function openEditOrderModal(item, mode) {
   document.getElementById('editOrderName').value = item.name;
   document.getElementById('editOrderQty').value = item.qty;
   document.getElementById('editOrderPrice').value = item.price;
+  const es = document.getElementById('editOrderSuggest'); if (es) es.innerHTML = '';
   document.getElementById('editOrderModal').classList.remove('hidden');
 }
 function onEditOrderNameChanged() {
   const v = document.getElementById('editOrderName').value.trim();
-  const m = (allMenus || []).find(function (x) { return String(x['メニュー名'] || '').trim() === v; });
+  const box = document.getElementById('editOrderSuggest');
+  const menus = allMenus || [];
+  const m = menus.find(function (x) { return String(x['メニュー名'] || '').trim() === v; });
   if (m) document.getElementById('editOrderPrice').value = Number(m['価格'] || 0);
+  if (!box) return;
+  if (!v || m) { box.innerHTML = ''; return; }
+  const hits = menus.filter(function (x) { return String(x['メニュー名'] || '').indexOf(v) >= 0; }).slice(0, 6);
+  box.innerHTML = '';
+  hits.forEach(function (x) {
+    const d = document.createElement('div');
+    d.className = 'es-item';
+    d.innerHTML = '<span></span><strong>¥' + Number(x['価格'] || 0).toLocaleString() + '</strong>';
+    d.firstChild.textContent = x['メニュー名'];
+    d.onclick = function () {
+      document.getElementById('editOrderName').value = x['メニュー名'];
+      document.getElementById('editOrderPrice').value = Number(x['価格'] || 0);
+      box.innerHTML = '';
+    };
+    box.appendChild(d);
+  });
 }
 function executeEditOrder() {
   if (!editingOrder) return;
@@ -3699,6 +3898,23 @@ function bfConfirm(text, onOk) {
   document.getElementById('bfConfirmNg').onclick = () => ov.classList.add('hidden');
   document.getElementById('bfConfirmOk').onclick = () => { ov.classList.add('hidden'); onOk(); };
 }
+
+// 2026-11-14 キーボードで入力欄・金額が隠れないよう、モーダルを見えている範囲に合わせ、入力欄へスクロール
+(function () {
+  var vv = window.visualViewport;
+  function sync() {
+    if (!vv) return;
+    var st = document.documentElement.style;
+    st.setProperty('--vvh', vv.height + 'px');
+    st.setProperty('--vvt', vv.offsetTop + 'px');
+  }
+  if (vv) { vv.addEventListener('resize', sync); vv.addEventListener('scroll', sync); sync(); }
+  document.addEventListener('focusin', function (e) {
+    var t = e.target;
+    if (!t || !t.closest || !t.closest('.modal-sheet') || !/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+    setTimeout(function () { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 300);
+  });
+})();
 </script>
 </body>
 </html>
