@@ -2824,7 +2824,7 @@ function courseRowHtml_(no, d, esc) {
     '<div class="cwarn" style="display:none; margin:-2px 0 4px 24px; font-size:11px; color:#b04a00;"></div>';
 }
 
-// コース料理の記録：過去のコースは「編集」で入力欄に読み込み、同じ日付で保存すると上書き、「削除」でその日の記録を消す
+// コース料理の記録：出した料理を1皿ずつ残す。「記録する」で入力欄を開き、過去のコースは「直す」で読み込み、同じ日付で保存すると上書き、「削除」でその日の記録を消す（たまちゃん先輩と同じ）
 function courseHtml_(r, esc) {
   const courses = r.courses || [];
   window.__custCourses = courses;
@@ -2834,16 +2834,20 @@ function courseHtml_(r, esc) {
     return '<div style="padding:5px 0; border-bottom:1px solid var(--border); font-size:12px;"><div style="display:flex; gap:6px; align-items:flex-start;">' +
       '<div style="flex:1; min-width:0;"><span style="color:var(--ink-soft);">' + esc(c.date) + '</span>　' +
       c.dishes.map(function (d) { return esc(d.no + '.' + d.name) + (d.note ? '（' + esc(d.note) + '）' : ''); }).join('　') + '</div>' +
-      '<button type="button" class="courseCopy" data-i="' + i + '" style="flex-shrink:0; ' + btn + '">編集</button>' +
+      '<button type="button" class="courseCopy" data-i="' + i + '" style="flex-shrink:0; ' + btn + '">直す</button>' +
       '<button type="button" class="courseDel" data-i="' + i + '" style="flex-shrink:0; ' + btn + ' color:#b00020;">削除</button></div></div>';
   }).join('');
-  return '<div style="margin:14px 0 4px; font-weight:700; color:var(--brown);">コース料理の記録（10皿まで）</div>' +
-    '<div style="font-size:11px; color:var(--ink-soft); margin-bottom:4px;">同じ日付で保存すると、その日の記録を上書きします</div>' +
-    '<input type="date" id="courseDate" class="pin-input" value="' + today + '" style="margin-bottom:6px;">' +
+  return '<div style="margin:14px 0 4px; font-weight:700; color:var(--brown);">出したコース料理' + (courses.length ? '（' + courses.length + '回）' : '') + '</div>' +
+    '<div style="font-size:11px; color:var(--ink-soft); margin-bottom:6px;">コースでお出しした料理を1皿ずつ残す欄です。次のコースで同じ料理が重ならないように使います（たまちゃん先輩と同じ記録）。</div>' +
+    '<button type="button" class="reg-customer-btn" id="courseOpen" style="width:100%;">＋ 今日出したコースを記録する</button>' +
+    '<div id="courseForm" style="display:none; margin-top:6px;">' +
+    '<label style="font-size:12px; color:var(--ink-soft);">出した日 <input type="date" id="courseDate" class="pin-input" value="' + today + '" style="margin-bottom:6px;"></label>' +
+    '<div style="font-size:11px; color:var(--ink-soft); margin-bottom:4px;">料理名を順番に入力（反応は空でOK）。前に出した料理には ⚠ が出ます。同じ日付で保存すると、その日の記録を上書きします。</div>' +
     '<div id="courseRows">' + courseRowHtml_(1, null, esc) + '</div>' +
-    '<div style="display:flex; gap:6px; margin:6px 0;"><button type="button" class="reg-customer-btn" id="courseAdd" style="flex:1;">＋皿を追加</button>' +
-    '<button type="button" class="reg-customer-btn" id="courseSave" style="flex:1;">コースを保存</button></div>' +
-    (past ? '<div style="font-size:12px; color:var(--ink-soft); margin-top:6px;">これまでのコース（新しい順）</div>' + past : '');
+    '<div style="display:flex; gap:6px; margin:6px 0;"><button type="button" class="reg-customer-btn" id="courseAdd" style="flex:1;">＋皿を追加（10皿まで）</button>' +
+    '<button type="button" class="reg-customer-btn" id="courseSave" style="flex:1;">保存</button>' +
+    '<button type="button" class="reg-customer-btn" id="courseClose" style="flex:1;">やめる</button></div></div>' +
+    (past ? '<div style="margin-top:8px;">' + past + '</div>' : '<div style="font-size:12px; color:var(--ink-soft); margin-top:6px;">まだ記録はありません。</div>');
 }
 
 function wireCourse_(phone, name, reload) {
@@ -2871,6 +2875,11 @@ function wireCourse_(phone, name, reload) {
     }).withFailureHandler(function () { hideLoadingMask(); showToast('通信に失敗しました'); })
       .saveCourseRecord(phone, name, day, dishes);
   };
+  const form = document.getElementById('courseForm'), openBtn = document.getElementById('courseOpen');
+  const openForm = function () { if (form) form.style.display = 'block'; if (openBtn) openBtn.style.display = 'none'; const f = rows.querySelector('.cdish'); if (f) f.focus(); };
+  if (openBtn) openBtn.addEventListener('click', openForm);
+  const closeBtn = document.getElementById('courseClose');
+  if (closeBtn) closeBtn.addEventListener('click', function () { setRows(null); if (form) form.style.display = 'none'; if (openBtn) openBtn.style.display = ''; });
   rows.addEventListener('input', function (e) { const row = e.target.closest('.course-row'); if (row && e.target.classList.contains('cdish')) warn(row); });
   rows.addEventListener('click', function (e) {
     if (!e.target.classList.contains('cdel')) return;
@@ -2887,8 +2896,8 @@ function wireCourse_(phone, name, reload) {
   Array.prototype.forEach.call(document.querySelectorAll('.courseCopy'), function (b) {
     b.addEventListener('click', function () {
       const c = (window.__custCourses || [])[Number(b.getAttribute('data-i'))]; if (!c) return;
-      document.getElementById('courseDate').value = c.date; setRows(c.dishes);
-      showToast(c.date + ' のコースを読み込みました。直して「コースを保存」で上書きします');
+      document.getElementById('courseDate').value = c.date; setRows(c.dishes); openForm();
+      showToast(c.date + ' のコースを読み込みました。直して「保存」で上書きします');
       rows.scrollIntoView({ behavior: 'smooth', block: 'center' });
     });
   });
